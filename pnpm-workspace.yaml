@@ -1,0 +1,5 @@
+packages:
+  - '.'
+allowBuilds:
+  '@napi-rs/canvas': true
+  esbuild: true

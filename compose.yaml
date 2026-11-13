@@ -1,0 +1,27 @@
+services:
+  app:
+    build: .
+    image: zhixu-knowledge:0.1.0
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3001}:3001"
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /app/data
+      TRUST_PROXY: "${TRUST_PROXY:-0}"
+      APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Shanghai}"
+    volumes:
+      - knowledge-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+
+volumes:
+  knowledge-data:
+    name: "${DATA_VOLUME:-zhixu-data}"

@@ -1,0 +1,17 @@
+export type Source = { id: string; title: string; filename: string; type: 'pdf' | 'markdown'; category: string; size: number; status: 'processing' | 'ready' | 'failed'; error: string; progress: number; pages: number; read_progress: number; created_at: string; updated_at: string };
+export type Chunk = { id: string; source_id: string; page: number; heading: string; content: string; position: number; source_title?: string };
+export type Note = { id: string; source_id: string; chunk_id: string | null; title: string; content: string; created_at: string };
+export type SourceDetail = Source & { chunks: Chunk[]; notes: Note[] };
+export type Knowledge = { id: string; title: string; summary: string; tags: string[]; prerequisites: string[]; source_id: string | null; chunk_id: string | null; mastery: string; draft: boolean; due_at: string | null; created_at: string; updated_at: string };
+export type Skill = { id: string; title: string; description: string; criteria: string; knowledge_ids: string[]; status: string; evidence: string; created_at: string };
+export type Step = { id: string; title: string; done: boolean };
+export type Plan = { id: string; title: string; goal: string; due_date: string | null; source_id: string | null; steps: Step[]; created_at: string };
+export type Practice = { id: string; knowledge_id: string | null; prompt: string; reference: string; answer: string; feedback: string; feedback_mode: string; status: string; rating: string | null; due_at: string | null; reviewed_at: string | null; created_at: string };
+export type Citation = { number: number; source_id: string; chunk_id: string; title: string; heading: string; page: number; type: string; excerpt: string };
+export type Message = { id: string; role: 'user' | 'assistant'; content: string; citations: Citation[]; mode: string; created_at: string };
+export type Conversation = { id: string; title: string; source_id: string | null; created_at: string; updated_at: string; messages?: Message[] };
+export type Settings = { baseUrl: string; model: string; keyConfigured: boolean; configured: boolean };
+export type Activity = { id: string; kind: string; label: string; created_at: string };
+export type Dashboard = { stats: { sources: number; knowledge: number; skills: number; mastered: number; due: number; practiceCount: number; storage: number }; sources: Source[]; dueKnowledge: Knowledge[]; plans: Plan[]; activities: Activity[]; rhythm: { created_at: string }[]; model: Settings };
+export const CATEGORIES = ['个人学习', '论文研究', '项目知识', '故障经验', '团队百科'];
+export const MASTERY = ['未评估', '理解中', '可独立完成', '需复习'];
