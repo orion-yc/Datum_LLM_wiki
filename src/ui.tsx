@@ -1,13 +1,15 @@
 import { Children, cloneElement, isValidElement, createContext, useContext, useEffect, useId, useRef, useState, type ReactNode, type ReactElement, type ButtonHTMLAttributes } from 'react';
 import { X, LoaderCircle, ArrowRight, BookOpen, AlertCircle, Check, Sparkles } from 'lucide-react';
 
-type Context = { revision: number; refresh: () => void; notify: (text: string, kind?: 'success' | 'error') => void; upload: () => void };
-export const AppContext = createContext<Context>({ revision: 0, refresh: () => {}, notify: () => {}, upload: () => {} });
+import type { Member } from './types';
+type Context = { revision: number; refresh: () => void; notify: (text: string, kind?: 'success' | 'error') => void; upload: () => void; user?: Member; canEdit: boolean; isAdmin: boolean };
+export const AppContext = createContext<Context>({ revision: 0, refresh: () => {}, notify: () => {}, upload: () => {}, canEdit: false, isAdmin: false });
 export const useApp = () => useContext(AppContext);
-export function Button({ children, variant = 'primary', className = '', loading, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'ghost' | 'danger'; loading?: boolean }) {
+export function Button({ children, variant = 'primary', className = '', loading, write = false, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'ghost' | 'danger'; loading?: boolean; write?: boolean }) {
+  const { canEdit } = useApp(); if (write && !canEdit) return null;
   return <button className={`button ${variant} ${className}`} {...rest} disabled={rest.disabled || loading}>{loading && <LoaderCircle size={16} className="spin" />}{children}</button>;
 }
-export function IconButton({ children, label, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) { return <button type="button" className="icon-button" aria-label={label} title={label} {...props}>{children}</button>; }
+export function IconButton({ children, label, write = true, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; write?: boolean }) { const { canEdit } = useApp(); if (write && !canEdit) return null; return <button type="button" className="icon-button" aria-label={label} title={label} {...props}>{children}</button>; }
 export function Badge({ children, tone = 'purple' }: { children: ReactNode; tone?: string }) { return <span className={`badge ${tone}`}>{children}</span>; }
 export function PageTitle({ eyebrow, title, description, action }: { eyebrow?: string; title: string; description?: string; action?: ReactNode }) { return <div className="page-heading"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h1>{title}</h1>{description && <p>{description}</p>}</div>{action}</div>; }
 export function Empty({ title, text, action, icon }: { title: string; text: string; action?: ReactNode; icon?: ReactNode }) { return <div className="empty"><div className="empty-icon">{icon || <BookOpen size={28} />}</div><h3>{title}</h3><p>{text}</p>{action}</div>; }
@@ -43,11 +45,11 @@ export function Modal({ title, subtitle, children, onClose, wide = false }: { ti
     document.addEventListener('keydown', onKey);
     return () => { clearTimeout(timer); document.body.style.overflow = original; document.removeEventListener('keydown', onKey); previous?.focus(); };
   }, []);
-  return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><div ref={ref} className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}><div className="modal-heading"><div><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><IconButton label="关闭窗口" onClick={onClose}><X size={20} /></IconButton></div>{children}</div></div>;
+  return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><div ref={ref} className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}><div className="modal-heading"><div><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><IconButton write={false} label="关闭窗口" onClick={onClose}><X size={20} /></IconButton></div>{children}</div></div>;
 }
-export function Confirm({ title, text, onClose, onConfirm }: { title: string; text: string; onClose: () => void; onConfirm: () => Promise<unknown> }) {
+export function Confirm({ title, text, onClose, onConfirm, confirmLabel = '确认删除' }: { title: string; text: string; onClose: () => void; onConfirm: () => Promise<unknown>; confirmLabel?: string }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  return <Modal title={title} onClose={() => { if (!busy) onClose(); }}><p className="muted">{text}</p>{error && <ErrorBox message={error} />}<div className="form-footer"><Button variant="secondary" onClick={onClose} disabled={busy}>取消</Button><Button variant="danger" loading={busy} onClick={async () => { setBusy(true); try { await onConfirm(); onClose(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>确认删除</Button></div></Modal>;
+  return <Modal title={title} onClose={() => { if (!busy) onClose(); }}><p className="muted">{text}</p>{error && <ErrorBox message={error} />}<div className="form-footer"><Button variant="secondary" onClick={onClose} disabled={busy}>取消</Button><Button variant="danger" loading={busy} onClick={async () => { setBusy(true); try { await onConfirm(); onClose(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>{confirmLabel}</Button></div></Modal>;
 }
 export function SectionTitle({ title, count, action }: { title: string; count?: number; action?: ReactNode }) { return <div className="section-heading"><h2>{title}{count !== undefined && <span className="count">{count}</span>}</h2>{action}</div>; }
 export function LinkArrow({ children, onClick }: { children: ReactNode; onClick: () => void }) { return <button type="button" className="text-button" onClick={onClick}>{children}<ArrowRight size={15} /></button>; }

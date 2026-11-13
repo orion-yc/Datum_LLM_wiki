@@ -1,12 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { resolve, join } from 'node:path';
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createCipheriv, createDecipheriv } from 'node:crypto';
-
-export const dataDir = resolve(process.env.DATA_DIR || 'data');
-mkdirSync(join(dataDir, 'uploads'), { recursive: true });
-export const db = new DatabaseSync(join(dataDir, 'knowledge.sqlite'));
-db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
+R"SQL(PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, expires INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sources (
@@ -59,29 +51,4 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS activity (
  id TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT NOT NULL, created_at TEXT NOT NULL
 );
-`);
-
-const keyPath = join(dataDir, '.encryption-key');
-if (!existsSync(keyPath)) writeFileSync(keyPath, randomBytes(32), { mode: 0o600, flag: 'wx' });
-const encryptionKey = readFileSync(keyPath);
-
-export const now = () => new Date().toISOString();
-export const id = () => randomUUID();
-export const all = (sql, ...args) => db.prepare(sql).all(...args);
-export const one = (sql, ...args) => db.prepare(sql).get(...args);
-export const run = (sql, ...args) => db.prepare(sql).run(...args);
-export function transaction(fn) { db.exec('BEGIN'); try { const result = fn(); db.exec('COMMIT'); return result; } catch (e) { db.exec('ROLLBACK'); throw e; } }
-export function config(key) { return one('SELECT value FROM config WHERE key=?', key)?.value || ''; }
-export function setConfig(key, value) { run('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', key, value); }
-export function activity(kind, label) { run('INSERT INTO activity VALUES(?,?,?,?)', id(), kind, label, now()); }
-export function hashPassword(password) { const salt = randomBytes(16).toString('hex'); return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`; }
-export function verifyPassword(password, stored) { const [salt, hash] = stored.split(':'); if (!salt || !hash) return false; const candidate = scryptSync(password, salt, 64); const expected = Buffer.from(hash, 'hex'); return candidate.length === expected.length && timingSafeEqual(candidate, expected); }
-export function encrypt(value) { if (!value) return ''; const iv = randomBytes(12); const cipher = createCipheriv('aes-256-gcm', encryptionKey, iv); const content = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]); return [iv, cipher.getAuthTag(), content].map(b => b.toString('base64')).join('.'); }
-export function decrypt(value) { if (!value) return ''; const [iv, tag, body] = value.split('.').map(s => Buffer.from(s, 'base64')); const cipher = createDecipheriv('aes-256-gcm', encryptionKey, iv); cipher.setAuthTag(tag); return cipher.update(body, undefined, 'utf8') + cipher.final('utf8'); }
-export function decode(row) {
-  if (!row) return row;
-  const result = { ...row };
-  for (const key of ['tags', 'prerequisites', 'steps', 'knowledge_ids', 'citations']) if (key in result) result[key] = JSON.parse(result[key]);
-  if ('draft' in result) result.draft = Boolean(result.draft);
-  return result;
-}
+)SQL"

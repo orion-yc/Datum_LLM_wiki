@@ -31,6 +31,7 @@ test('完整 API 流程：认证、资料、知识、模型、练习、重启与
   const k = drafts.data.items.find(k => k.title.includes('闭区间')) || drafts.data.items[1];
   const confirmed = { ...k, draft: false, mastery: '理解中', due_at: '2026-11-13', tags: ['算法'] };
   assert.equal((await request(`/api/knowledge/${k.id}`, { method: 'PUT', body: confirmed })).data.draft, false);
+  confirmed._version = 2;
   assert.equal((await request(`/api/knowledge/${k.id}`, { method: 'PUT', body: { ...confirmed, prerequisites: [k.id] } })).status, 400);
   assert.equal((await request(`/api/knowledge/${k.id}`, { method: 'PUT', body: { ...confirmed, due_at: '2026-02-31' } })).status, 400);
   assert.equal((await request('/api/knowledge', { method: 'POST', body: { title: '错误来源', summary: '', source_id: null, chunk_id: source.chunks[0].id } })).status, 400);

@@ -17,6 +17,7 @@ const waitText = async text => visible(page.getByText(text, { exact: true }).fir
 
 try {
   await page.goto(server.base);
+  await page.getByLabel('显示姓名', { exact: true }).fill('浏览器测试用户');
   await page.getByLabel('设置访问密码').fill('browser-test-password');
   await page.getByLabel('确认访问密码').fill('browser-test-password');
   await page.getByRole('button', { name: '创建我的知识空间' }).click();

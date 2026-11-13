@@ -1,13 +1,12 @@
 services:
   app:
     build: .
-    image: zhixu-knowledge:0.1.0
+    image: zhixu-knowledge:0.3.0
     restart: unless-stopped
     init: true
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3001}:3001"
     environment:
-      NODE_ENV: production
       DATA_DIR: /app/data
       TRUST_PROXY: "${TRUST_PROXY:-0}"
       APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Shanghai}"

@@ -8,3 +8,5 @@ test-results/
 release/
 *.log
 .DS_Store
+build/
+.tools/

@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { binary, backendEnvironment } from './backend.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const children = [
-  spawn(process.execPath, ['--watch', 'server/index.mjs'], { cwd: root, stdio: 'inherit', env: { ...process.env, PORT: '3001', HOST: '127.0.0.1' } }),
+  spawn(binary, [], { cwd: root, stdio: 'inherit', env: { ...backendEnvironment(), PORT: '3001', HOST: '127.0.0.1' }, windowsHide: true }),
   spawn(process.execPath, ['node_modules/vite/bin/vite.js'], { cwd: root, stdio: 'inherit' }),
 ];
 let stopping = false;

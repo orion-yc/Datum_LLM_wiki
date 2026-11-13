@@ -1,0 +1,42 @@
+name: C++ and web verification
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install C++ and PDF dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ qt6-base-dev libqt6sql6-sqlite libssl-dev poppler-utils poppler-data
+          npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:all
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test
+      - run: pnpm test:e2e
+      - name: Build production C++ image
+        run: docker build -t datum-ci .
+      - name: Verify container runtime
+        run: |
+          docker run -d --name datum-ci -p 127.0.0.1:3001:3001 datum-ci
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3001/api/health; then exit 0; fi
+            sleep 1
+          done
+          docker logs datum-ci
+          exit 1
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-verification
+          path: test-results/
