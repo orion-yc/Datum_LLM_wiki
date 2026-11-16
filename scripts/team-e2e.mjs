@@ -40,7 +40,29 @@ try {
   await page.getByLabel('对比结论', { exact: true }).fill('两篇论文的实验集合不同，延迟数值不宜直接排名，需要统一实验设置验证。'); await page.getByRole('button', { name: '保存对比', exact: true }).first().click(); await visible(page.getByText('版本 2', { exact: false }));
   await page.getByRole('button', { name: '提交审核', exact: true }).click(); await visible(page.getByText('审核中', { exact: true }));
   await reviewer.goto(`${server.base}/#/papers/${comparisonId}`); await visible(reviewer.getByRole('button', { name: '审核通过并发布', exact: true }));
-  await reviewer.getByLabel('协作评论', { exact: true }).fill('已核对证据，实验设置差异需要明确保留。'); await reviewer.getByRole('button', { name: '发表评论', exact: true }).click(); await visible(reviewer.getByText('已核对证据，实验设置差异需要明确保留。', { exact: true }));
+  const reviewComment = '已核对证据，实验设置差异需要明确保留。';
+  const commentGate = Promise.withResolvers(), commentArrived = Promise.withResolvers();
+  const commentRoute = async route => {
+    if (route.request().method() === 'POST') { commentArrived.resolve(); await commentGate.promise; }
+    await route.continue();
+  };
+  await reviewer.route('**/api/comments', commentRoute);
+  const commentSaved = reviewer.waitForResponse(response => response.url() === `${server.base}/api/comments` && response.request().method() === 'POST');
+  try {
+    await reviewer.getByLabel('协作评论', { exact: true }).fill(reviewComment);
+    await reviewer.getByRole('button', { name: '发表评论', exact: true }).click();
+    await commentArrived.promise;
+    // Text in a pending textarea also matches getByText; only persisted list entries establish readiness.
+    assert.equal(await reviewer.getByText(reviewComment, { exact: true }).isVisible(), true);
+    assert.equal(await reviewer.locator('.comment-list .comment').count(), 0);
+    commentGate.resolve();
+    const commentResponse = await commentSaved;
+    assert.equal(commentResponse.status(), 201, await commentResponse.text());
+    const savedComment = await commentResponse.json();
+    assert.equal(savedComment.kind, 'comparison'); assert.equal(savedComment.target_id, comparisonId);
+    assert.equal(savedComment.resolved, 0);
+    await visible(reviewer.locator('.comment-list .comment').filter({ hasText: reviewComment }));
+  } finally { commentGate.resolve(); await reviewer.unroute('**/api/comments', commentRoute); }
   const blockedPublication = reviewer.waitForResponse(response => response.url() === `${server.base}/api/comparisons/${comparisonId}/status` && response.request().method() === 'POST');
   await reviewer.getByRole('button', { name: '审核通过并发布', exact: true }).click();
   const blockedResponse = await blockedPublication;
