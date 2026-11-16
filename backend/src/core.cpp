@@ -11,7 +11,7 @@ QString dataDir;
 const QStringList categories = {"个人学习", "论文研究", "项目知识", "故障经验", "团队百科"};
 static const QStringList jsonFields = {"tags",          "prerequisites", "steps",
                                        "knowledge_ids", "citations",     "paper_ids",
-                                       "dimensions",    "cells",         "snapshot"};
+                                       "dimensions",    "cells",         "snapshot", "warnings"};
 QString uid() {
   return QUuid::createUuid().toString(QUuid::WithoutBraces);
 }
@@ -225,6 +225,11 @@ Obj Database::decorate(const QString &table, Obj row) {
   auto v = one("SELECT version FROM resource_versions WHERE kind=? AND target_id=?",
                {table, str(row, "id")});
   row["_version"] = v.isEmpty() ? 1 : v["version"].toInt();
+  if (table == "sources" && str(row, "type") == "pdf") {
+    auto id = str(row, "id");
+    row["ai_parse"] = one("SELECT * FROM pdf_parse_jobs WHERE source_id=? ORDER BY created_at DESC,id DESC LIMIT 1", {id});
+    row["ai_pages"] = one("SELECT count(DISTINCT page) count FROM chunks WHERE source_id=? AND active=1 AND parse_job_id<>''", {id})["count"];
+  }
   return row;
 }
 Obj Database::must(const QString &table, const QString &id) {
@@ -295,7 +300,7 @@ void Database::activity(const Obj &u, const QString &kind, const QString &label)
 }
 void Database::initialize() {
   if (!one("SELECT name FROM sqlite_master WHERE type='table' AND name='config'").isEmpty() &&
-      config("schema_version") != "3") {
+      config("schema_version") != "4") {
     require(QDir().mkpath(dataDir + "/backups"), 500, "无法创建迁移备份目录。");
     auto backup = dataDir + "/backups/before-cpp-" +
                   QDateTime::currentDateTimeUtc().toString("yyyyMMdd-HHmmss-zzz") + "-" + uid();
@@ -354,7 +359,8 @@ CREATE TABLE IF NOT EXISTS comparison_history(id TEXT PRIMARY KEY,comparison_id 
   }
   exec("DELETE FROM config WHERE key='password'");
   initializeWiki(*this);
-  config("schema_version", "3");
+  initializePdf(*this);
+  config("schema_version", "4");
   if (config("team_name").isEmpty())
     config("team_name", "我的学习空间");
   tx.commit();
@@ -542,10 +548,11 @@ Obj modelSettings(Database &db) {
   return {{"baseUrl", base},
           {"model", model},
           {"reasoningEffort", effort.isEmpty() ? "default" : effort},
+          {"pdfModel", db.config("pdf_model")},
           {"keyConfigured", !db.config("model_api_key").isEmpty()},
           {"configured", !base.isEmpty() && !model.isEmpty()}};
 }
-QString complete(Database &db, const Arr &messages, bool test) {
+QString complete(Database &db, const Arr &messages, bool test, const CompletionOptions &options) {
   auto settings = modelSettings(db);
   require(settings["configured"].toBool(), 400, "请先在设置中配置模型地址与模型名称。");
   QNetworkAccessManager network;
@@ -558,24 +565,41 @@ QString complete(Database &db, const Arr &messages, bool test) {
     request.setRawHeader("Authorization", ("Bearer " + key).toUtf8());
   auto effort = str(settings, "reasoningEffort");
   bool explicitEffort = effort != "default";
-  Obj body{{"model", str(settings, "model")}, {"messages", messages}};
-  if (explicitEffort) {
-    body["reasoning_effort"] = effort;
+  Obj body{{"model", options.model.isEmpty() ? str(settings, "model") : options.model},
+           {"messages", messages}};
+  if (explicitEffort || options.document) {
+    if (explicitEffort)
+      body["reasoning_effort"] = effort;
     // Reasoning shares the completion budget; temperature is rejected by some models.
-    body["max_completion_tokens"] = test ? 4096 : 32768;
+    body["max_completion_tokens"] = test ? 4096 : (explicitEffort ? 32768 : 8192);
   } else {
     body["temperature"] = 0.25;
     body["max_tokens"] = test ? 16 : 4000;
   }
   QJsonDocument doc;
   for (int attempt = 0; attempt < 2; ++attempt) {
+    require(!options.canceled || !options.canceled(), 409, "解析已取消。");
     auto reply = network.post(request, pack(body).toUtf8());
     QEventLoop loop;
     QTimer timer;
     timer.setSingleShot(true);
     QObject::connect(&timer, &QTimer::timeout, reply, &QNetworkReply::abort);
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    timer.start(explicitEffort ? (test ? 60000 : 180000) : (test ? 20000 : 60000));
+    QTimer cancellation;
+    if (options.canceled) {
+      QObject::connect(&cancellation, &QTimer::timeout, reply, [&] {
+        try {
+          if (options.canceled())
+            reply->abort();
+        } catch (...) {
+          // Qt callbacks must not propagate database exceptions through the event loop.
+          reply->abort();
+        }
+      });
+      cancellation.start(500);
+    }
+    timer.start(explicitEffort || options.document ? (test ? 60000 : 180000)
+                                                 : (test ? 20000 : 60000));
     loop.exec();
     auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     auto payload = reply->readAll();
@@ -595,7 +619,7 @@ QString complete(Database &db, const Arr &messages, bool test) {
           "unknown|unrecognized|unexpected|unsupported|not supported|not permitted|not allowed|不支持|未识别");
       auto code = upstream["code"].toString().toLower();
       // Retry only an explicitly unsupported token parameter, preserving the chosen effort.
-      if (explicitEffort && attempt == 0 && mentions("max_completion_tokens") &&
+      if ((explicitEffort || options.document) && attempt == 0 && mentions("max_completion_tokens") &&
           (unsupported.match(message).hasMatch() || code == "unsupported_parameter" ||
            code == "unknown_parameter")) {
         body["max_tokens"] = body.take("max_completion_tokens");
@@ -610,6 +634,8 @@ QString complete(Database &db, const Arr &messages, bool test) {
   }
   auto choices = doc.object()["choices"].toArray();
   require(!choices.isEmpty(), 502, "模型服务未返回文本回答。");
+  require(!options.document || str(choices[0].toObject(), "finish_reason") != "length", 502,
+          "本页解析结果超出模型输出上限，请调整模型或降低推理强度后重试。");
   auto content = choices[0].toObject()["message"].toObject()["content"].toString().trimmed();
   require(!content.isEmpty() && content.size() <= 100000, 502, "模型服务未返回有效文本。");
   return content;

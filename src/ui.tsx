@@ -27,7 +27,7 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   };
   return <div className="field"><label htmlFor={fieldId} className="field-label">{label}</label>{Children.map(children, attach)}{hint && <small id={hintId}>{hint}</small>}</div>;
 }
-export function Modal({ title, subtitle, children, onClose, wide = false }: { title: string; subtitle?: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
+export function Modal({ title, subtitle, children, onClose, wide = false, className = '' }: { title: string; subtitle?: string; children: ReactNode; onClose: () => void; wide?: boolean; className?: string }) {
   const ref = useRef<HTMLDivElement>(null), titleId = useId(), closeRef = useRef(onClose);
   closeRef.current = onClose;
   useLayoutEffect(() => {
@@ -45,7 +45,7 @@ export function Modal({ title, subtitle, children, onClose, wide = false }: { ti
     document.addEventListener('keydown', onKey);
     return () => { document.body.style.overflow = original; document.removeEventListener('keydown', onKey); previous?.focus({ preventScroll: true }); };
   }, []);
-  return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><div ref={ref} className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}><div className="modal-heading"><div><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><IconButton write={false} label="关闭窗口" onClick={onClose}><X size={20} /></IconButton></div>{children}</div></div>;
+  return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><div ref={ref} className={`modal ${wide ? 'wide' : ''} ${className}`} role="dialog" aria-modal="true" aria-labelledby={titleId}><div className="modal-heading"><div><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><IconButton write={false} label="关闭窗口" onClick={onClose}><X size={20} /></IconButton></div>{children}</div></div>;
 }
 export function Confirm({ title, text, onClose, onConfirm, confirmLabel = '确认删除' }: { title: string; text: string; onClose: () => void; onConfirm: () => Promise<unknown>; confirmLabel?: string }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -62,5 +62,19 @@ export function RichText({ text, onCitation }: { text: string; onCitation?: (num
     if (part.startsWith('`')) return <code key={i}>{part.slice(1, -1)}</code>;
     return part;
   });
-  return <div className="rich-text">{parts.map((part, i) => part.startsWith('```') ? <pre key={i}><code>{part.replace(/^```[^\n]*\n?/, '').replace(/```$/, '')}</code></pre> : <div key={i}>{part.split('\n').map((line, j) => /^#{1,4} /.test(line) ? <h4 key={j}>{inline(line.replace(/^#{1,4} /, ''))}</h4> : <div className={line ? 'text-line' : 'text-gap'} key={j}>{inline(line)}</div>)}</div>)}</div>;
+  const prose = (part: string) => {
+    const lines = part.split('\n'), nodes: ReactNode[] = [];
+    const cells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map(cell => cell.trim().replace(/\\\|/g, '|'));
+    for (let j = 0; j < lines.length; j++) {
+      const line = lines[j], separator = cells(lines[j + 1] || '');
+      if (line.includes('|') && separator.length >= 2 && separator.every(cell => /^:?-{3,}:?$/.test(cell)) && cells(line).length === separator.length) {
+        const headings = cells(line), rows: string[][] = [], key = j;
+        j++;
+        while (j + 1 < lines.length && lines[j + 1].includes('|') && cells(lines[j + 1]).length === headings.length) rows.push(cells(lines[++j]));
+        nodes.push(<div className="markdown-table" key={key} tabIndex={0}><table><thead><tr>{headings.map((cell, column) => <th key={column}>{inline(cell)}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, column) => <td key={column}>{inline(cell)}</td>)}</tr>)}</tbody></table></div>);
+      } else nodes.push(/^#{1,4} /.test(line) ? <h4 key={j}>{inline(line.replace(/^#{1,4} /, ''))}</h4> : <div className={line ? 'text-line' : 'text-gap'} key={j}>{inline(line)}</div>);
+    }
+    return nodes;
+  };
+  return <div className="rich-text">{parts.map((part, i) => part.startsWith('```') ? <pre key={i}><code>{part.replace(/^```[^\n]*\n?/, '').replace(/```$/, '')}</code></pre> : <div key={i}>{prose(part)}</div>)}</div>;
 }

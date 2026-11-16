@@ -69,7 +69,7 @@ void ingest(Database &db, const QString &sourceId, const Obj &user) {
       require(raw.startsWith("%PDF-"), 400, "文件内容不是有效的 PDF。");
       QProcess proc;
       proc.setProgram(qEnvironmentVariable("PDFTOTEXT", "pdftotext"));
-      proc.setArguments({"-enc", "UTF-8", "-layout", path, "-"});
+      proc.setArguments({"-enc", "UTF-8", path, "-"});
       proc.start();
       require(proc.waitForStarted(10000), 500,
               "未找到 pdftotext，请安装 Poppler 或配置 PDFTOTEXT。");
@@ -102,7 +102,7 @@ void ingest(Database &db, const QString &sourceId, const Obj &user) {
     for (auto v : chunks)
       length += str(v.toObject(), "content").size();
     require(length >= 8 && !chunks.isEmpty(), 400,
-            "未提取到可阅读的正文。扫描版 PDF 需先完成 OCR。");
+            "未提取到可阅读的正文。扫描版 PDF 可尝试 AI 版面解析，或先完成 OCR 后上传。");
     require(chunks.size() <= 15000, 400, "正文过长，请拆分资料。");
     Tx tx(db);
     db.must("sources", sourceId);
@@ -160,9 +160,16 @@ static void saveResource(Context &c, const QString &table, Obj row, bool updatin
   tx.commit();
   c.json(db.must(table, id), updating ? 200 : 201);
 }
-static Obj sourceDetail(Database &db, const QString &id) {
+static Obj sourceDetail(Database &db, const QString &id, const QString &chunkId = {}) {
   auto s = db.must("sources", id);
-  s["chunks"] = db.all("SELECT * FROM chunks WHERE source_id=? ORDER BY position", {id});
+  auto chunks = db.all("SELECT * FROM chunks WHERE source_id=? AND active=1 ORDER BY page,position", {id});
+  if (!chunkId.isEmpty()) {
+    auto historical = db.must("chunks", chunkId);
+    require(str(historical, "source_id") == id, 400, "引用片段不属于这份资料。");
+    if (historical["active"].toInt() == 0)
+      chunks.append(historical);
+  }
+  s["chunks"] = chunks;
   Arr notes;
   for (auto v : db.all("SELECT * FROM notes WHERE source_id=? ORDER BY created_at DESC", {id}))
     notes.append(db.decorate("notes", v.toObject()));
@@ -251,6 +258,23 @@ bool learningRoutes(Context &c) {
       if (category.isEmpty())
         category = "个人学习";
       require(categories.contains(category), 400, "无效的资料分类。");
+      auto parseMode = qs(c.req.form.get_field("parseMode"));
+      require(parseMode.isEmpty() || parseMode == "standard" || parseMode == "ai", 400,
+              "无效的 PDF 解析方式。");
+      bool ai = parseMode == "ai";
+      int aiPages = 10;
+      if (ai) {
+        require(modelSettings(db)["configured"].toBool(), 400,
+                "请先在空间设置中连接支持图片输入的模型。");
+        auto requested = qs(c.req.form.get_field("aiPages"));
+        if (!requested.isEmpty()) {
+          bool ok;
+          aiPages = requested.toInt(&ok);
+          require(ok && aiPages >= 1 && aiPages <= 50, 400, "AI 解析每次可选择 1 至 50 页。");
+        }
+        require(db.one("SELECT count(*) count FROM pdf_parse_jobs WHERE status IN ('queued','running')")["count"].toInt() + int(files.size()) <= 12,
+                429, "AI 解析队列已满，请稍后重试。");
+      }
       for (auto &f : files) {
         auto ext = QFileInfo(qs(f.filename)).suffix().toLower();
         require(QStringList{"pdf", "md", "markdown", "txt"}.contains(ext), 400,
@@ -286,6 +310,8 @@ bool learningRoutes(Context &c) {
           writeFile(dataDir + "/uploads/" + entity, QByteArray::fromStdString(f.content));
           written << entity;
           db.insert("sources", row);
+          if (ai && str(row, "type") == "pdf")
+            queuePdfParse(db, entity, {{"firstPage", 1}, {"lastPage", aiPages}}, c.user);
         }
         tx.commit();
       } catch (...) {
@@ -301,7 +327,7 @@ bool learningRoutes(Context &c) {
       return true;
     }
     if (p.size() == 3 && c.method("GET")) {
-      c.json(sourceDetail(db, id));
+      c.json(sourceDetail(db, id, qs(c.req.get_param_value("chunk"))));
       return true;
     }
     if (p.size() == 4 && p[3] == "file" && c.method("GET")) {
@@ -334,7 +360,12 @@ bool learningRoutes(Context &c) {
       return true;
     }
     if (p.size() == 4 && p[3] == "retry" && c.method("POST")) {
+      Tx tx(db);
       require(str(db.must("sources", id), "status") == "failed", 409, "仅可重试处理失败的资料。");
+      require(db.one("SELECT id FROM pdf_parse_jobs WHERE source_id=? AND status IN ('queued','running')", {id}).isEmpty(),
+              409, "AI 解析正在排队或运行，请等待或取消后再重试普通解析。");
+      db.update("sources", id, {{"status", "processing"}});
+      tx.commit();
       ingest(db, id, c.user);
       c.json(Obj{{"ok", true}}, 202);
       return true;
@@ -353,13 +384,14 @@ bool learningRoutes(Context &c) {
       db.activity(c.user, "source", "删除了《" + str(s, "title") + "》");
       tx.commit();
       QFile::remove(dataDir + "/uploads/" + id);
+      QDir(dataDir + "/pdf-previews/" + id).removeRecursively();
       c.json(Obj{{"ok", true}});
       return true;
     }
     if (p.size() == 4 && p[3] == "generate" && c.method("POST")) {
       ready(db, id);
       auto chunks =
-          db.all("SELECT * FROM chunks WHERE source_id=? ORDER BY position LIMIT 24", {id});
+          db.all("SELECT * FROM chunks WHERE source_id=? AND active=1 ORDER BY page,position LIMIT 24", {id});
       Arr drafts;
       auto mode = "extract";
       if (modelSettings(db)["configured"].toBool()) {
@@ -786,6 +818,7 @@ bool learningRoutes(Context &c) {
       if (!c.admin()) {
         settings["baseUrl"] = "";
         settings["model"] = "";
+        settings["pdfModel"] = "";
       }
       c.json(settings);
       return true;
@@ -805,10 +838,14 @@ bool learningRoutes(Context &c) {
       auto effort = choice(c.body, "reasoningEffort",
                            {"default", "none", "minimal", "low", "medium", "high", "xhigh", "max"},
                            str(modelSettings(db), "reasoningEffort"));
+      auto pdfModel = text(c.body, "pdfModel", 200, false, db.config("pdf_model"));
+      if (pdfModel.isNull())
+        pdfModel = QStringLiteral("");
       Tx tx(db);
       db.config("model_base_url", base);
       db.config("model_name", model);
       db.config("model_reasoning_effort", effort);
+      db.config("pdf_model", pdfModel);
       if (c.body["clearKey"].toBool())
         db.config("model_api_key", "");
       else if (!text(c.body, "apiKey", 2000).isEmpty())
@@ -840,14 +877,15 @@ bool learningRoutes(Context &c) {
   }
   if (resource == "export" && c.method("GET")) {
     c.needAdmin();
-    Obj result{{"version", 3}, {"exportedAt", now()}};
+    Obj result{{"version", 4}, {"exportedAt", now()}};
     for (auto table :
          QStringList{"sources", "chunks", "notes", "knowledge", "skills", "plans", "practices",
                      "conversations", "messages", "activity", "papers", "comparisons",
-                     "comparison_history", "comments", "tasks", "wiki_pages", "wiki_history"})
+                     "comparison_history", "comments", "tasks", "wiki_pages", "wiki_history", "pdf_parse_jobs"})
       result[table] = db.list(table);
     result["wiki_evidence"] = db.all("SELECT * FROM wiki_evidence ORDER BY page_id,position");
     result["wiki_links"] = db.all("SELECT * FROM wiki_links ORDER BY page_id,target_id");
+    result["pdf_parse_pages"] = db.all("SELECT * FROM pdf_parse_pages ORDER BY job_id,page");
     result["members"] = db.all("SELECT id,username,name,role,active,created_at FROM users");
     c.res.set_header("Content-Disposition",
                      bytes("attachment; filename=\"zhixu-learning-" + calendarDate() + ".json\""));

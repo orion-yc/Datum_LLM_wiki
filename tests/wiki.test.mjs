@@ -64,7 +64,7 @@ test('Wiki：跨资料草稿、原文校验、发布门槛、并发版本、反�
   await server.restart(); assert.equal((await call(`/api/wiki/${page.id}`)).data.status, 'published');
   page = (await call(`/api/wiki/${page.id}/restore`, 'POST', { _version: page._version, history_id: h.at(-1).id })).data;
   assert.equal(page.status, 'draft'); assert.equal(page.body, '这是结合原文的理解。[1]');
-  const exportedAll = (await call('/api/export')).data; assert.equal(exportedAll.version, 3); assert.equal(exportedAll.wiki_pages.length, 2); assert.equal(exportedAll.wiki_links.length, 1); assert.equal(exportedAll.wiki_evidence.length, 2);
+  const exportedAll = (await call('/api/export')).data; assert.equal(exportedAll.version, 4); assert.equal(exportedAll.wiki_pages.length, 2); assert.equal(exportedAll.wiki_links.length, 1); assert.equal(exportedAll.wiki_evidence.length, 2);
   const task = await call('/api/tasks', 'POST', { kind: 'wiki', target_id: other.id, title: '整理关联页' }); assert.equal(task.status, 201);
   const deleteOther = await call(`/api/wiki/${other.id}`, 'DELETE'); assert.equal(deleteOther.status, 200);
   assert.equal((await call('/api/tasks')).data.length, 0); assert.equal((await call(`/api/wiki/${page.id}`)).data.backlinks.length, 0);

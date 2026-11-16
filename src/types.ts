@@ -1,5 +1,6 @@
-export type Source = { id: string; title: string; filename: string; type: 'pdf' | 'markdown'; category: string; size: number; status: 'processing' | 'ready' | 'failed'; error: string; progress: number; pages: number; read_progress: number; created_at: string; updated_at: string };
-export type Chunk = { id: string; source_id: string; page: number; heading: string; content: string; position: number; source_title?: string };
+export type PdfParseJob = { id: string; source_id: string; status: 'queued' | 'running' | 'ready' | 'applied' | 'failed' | 'cancelled'; first_page: number; last_page: number; total_pages: number; completed_pages: number; model: string; error: string; pages?: { page: number; content: string; warnings: string[] }[] };
+export type Source = { id: string; title: string; filename: string; type: 'pdf' | 'markdown'; category: string; size: number; status: 'processing' | 'ready' | 'failed'; error: string; progress: number; pages: number; read_progress: number; created_at: string; updated_at: string; ai_parse?: PdfParseJob; ai_pages?: number };
+export type Chunk = { id: string; source_id: string; page: number; heading: string; content: string; position: number; source_title?: string; active?: number; parse_job_id?: string };
 export type Note = { id: string; source_id: string; chunk_id: string | null; title: string; content: string; created_at: string };
 export type SourceDetail = Source & { chunks: Chunk[]; notes: Note[] };
 export type Knowledge = { id: string; title: string; summary: string; tags: string[]; prerequisites: string[]; source_id: string | null; chunk_id: string | null; mastery: string; draft: boolean; due_at: string | null; created_at: string; updated_at: string };
@@ -11,7 +12,7 @@ export type Citation = { number: number; source_id: string; chunk_id: string; ti
 export type Message = { id: string; role: 'user' | 'assistant'; content: string; citations: Citation[]; mode: string; created_at: string };
 export type Conversation = { id: string; title: string; source_id: string | null; created_at: string; updated_at: string; messages?: Message[] };
 export type ReasoningEffort = 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-export type Settings = { baseUrl: string; model: string; reasoningEffort: ReasoningEffort; keyConfigured: boolean; configured: boolean };
+export type Settings = { baseUrl: string; model: string; reasoningEffort: ReasoningEffort; pdfModel: string; keyConfigured: boolean; configured: boolean };
 export type Activity = { id: string; kind: string; label: string; created_at: string };
 export type Dashboard = { stats: { sources: number; knowledge: number; skills: number; mastered: number; due: number; practiceCount: number; storage: number }; sources: Source[]; dueKnowledge: Knowledge[]; plans: Plan[]; activities: Activity[]; rhythm: { created_at: string }[]; model: Settings };
 export const CATEGORIES = ['个人学习', '论文研究', '项目知识', '故障经验', '团队百科'];

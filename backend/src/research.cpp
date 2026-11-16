@@ -309,7 +309,7 @@ bool researchRoutes(Context &c) {
       bool model = modelSettings(db)["configured"].toBool();
       for (auto pv : existing["paper_ids"].toArray()) {
         auto paper = db.must("papers", pv.toString());
-        auto chunks = db.all("SELECT * FROM chunks WHERE source_id=? ORDER BY position LIMIT 120",
+        auto chunks = db.all("SELECT * FROM chunks WHERE source_id=? AND active=1 ORDER BY page,position LIMIT 120",
                              {str(paper, "source_id")});
         Arr paperCells;
         for (auto dv : existing["dimensions"].toArray()) {

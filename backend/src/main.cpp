@@ -37,6 +37,7 @@ int main(int argc, char **argv) {
       for (auto s : db.all("SELECT id FROM sources WHERE status='processing'"))
         ingest(db, str(s.toObject(), "id"));
     }
+    PdfWorker pdfWorker;
     httplib::Server server;
     server.new_task_queue = [] { return new httplib::ThreadPool(8, 32); };
     runningServer = &server;
@@ -74,7 +75,7 @@ int main(int argc, char **argv) {
             req.path != "/api/settings/password")
           ctx.needEditor();
         if (teamRoutes(ctx) || collaborationRoutes(ctx) || researchRoutes(ctx) || wikiRoutes(ctx) ||
-            learningRoutes(ctx))
+            pdfRoutes(ctx) || learningRoutes(ctx))
           return;
         throw Error(404, "接口不存在。");
       } catch (const Error &e) {

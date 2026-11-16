@@ -113,6 +113,14 @@ bool learningRoutes(Context &);
 bool researchRoutes(Context &);
 bool wikiRoutes(Context &);
 void initializeWiki(Database &);
+void initializePdf(Database &);
+struct PdfWorker {
+  PdfWorker();
+  ~PdfWorker();
+};
+Obj queuePdfParse(Database &, const QString &sourceId, const Obj &, const Obj &user);
+Obj pdfParseDetail(Database &, const QString &sourceId);
+bool pdfRoutes(Context &);
 Arr wikiSearch(Database &, const QString &, int limit = 8, bool publishedOnly = false);
 Arr retrieveEvidence(Database &, const QString &, const QString &source = {}, int limit = 6);
 void validateSource(Database &, const QString &, const QString &chunk = {});
@@ -122,5 +130,10 @@ QStringList splitText(const QString &, int size = 1100, int overlap = 150);
 Arr markdownChunks(const QString &);
 Arr rankChunks(const QString &, const Arr &, int limit = 6);
 Obj modelSettings(Database &);
-QString complete(Database &, const Arr &, bool test = false);
+struct CompletionOptions {
+  QString model;
+  bool document = false;
+  std::function<bool()> canceled;
+};
+QString complete(Database &, const Arr &, bool test = false, const CompletionOptions & = {});
 void selfTest();

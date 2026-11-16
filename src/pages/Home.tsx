@@ -6,9 +6,11 @@ import type { Dashboard, Source } from '../types';
 export function BookCard({ source, compact = false }: { source: Source; compact?: boolean }) {
   const themes = ['lilac', 'sage', 'peach', 'sky', 'sand'];
   const theme = themes[[...source.title].reduce((n, c) => n + c.charCodeAt(0), 0) % themes.length];
+  const job = source.ai_parse?.id ? source.ai_parse : null;
+  const aiStatus = job?.status === 'queued' ? 'AI 解析排队中' : job?.status === 'running' ? 'AI 已解析 ' + job.completed_pages + ' 页' : job?.status === 'ready' ? 'AI 结果待核对' : '';
   return <button className={`book-card ${compact ? 'compact' : ''}`} onClick={() => navigate(`/library/${source.id}`)}>
     <div className={`book-cover ${theme}`}><span className="cover-top">{source.type === 'pdf' ? 'PDF DOCUMENT' : 'LEARNING NOTES'}</span><div className="cover-symbol"><BookOpen size={34} strokeWidth={1.15} /></div><strong>{source.title}</strong><span className="cover-bottom">{source.category} <span>知序 / LIBRARY</span></span><div className="book-spine" /></div>
-    <div className="book-info"><div className="book-meta"><span>{source.category}</span><span>{source.type === 'pdf' ? 'PDF' : 'MD / TXT'}</span></div><h3>{source.title}</h3><div className="book-progress"><span>{source.status === 'ready' ? `阅读进度 ${source.read_progress}%` : source.status === 'processing' ? `解析中 ${source.progress}%` : '解析失败 · 点击查看'}</span><span>{source.status === 'ready' ? `${source.pages} ${source.type === 'pdf' ? '页' : '节'}` : ''}</span></div><Progress value={source.status === 'processing' ? source.progress : source.read_progress} /></div>
+    <div className="book-info"><div className="book-meta"><span>{source.category}</span><span>{source.type === 'pdf' ? 'PDF' : 'MD / TXT'}</span></div><h3>{source.title}</h3><div className="book-progress"><span>{aiStatus || (source.status === 'ready' ? `阅读进度 ${source.read_progress}%` : source.status === 'processing' ? `解析中 ${source.progress}%` : '解析失败 · 点击查看')}</span><span>{source.status === 'ready' ? `${source.pages} ${source.type === 'pdf' ? '页' : '节'}` : ''}</span></div><Progress value={source.status === 'processing' ? source.progress : source.read_progress} /></div>
   </button>;
 }
 export default function Home() {

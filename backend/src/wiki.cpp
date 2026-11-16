@@ -151,7 +151,7 @@ Arr wikiSearch(Database &db, const QString &query, int limit, bool publishedOnly
 
 Arr retrieveEvidence(Database &db, const QString &query, const QString &source, int limit) {
   auto corpus = db.all("SELECT c.*,s.title source_title,s.type source_type FROM chunks c JOIN "
-                       "sources s ON s.id=c.source_id WHERE s.status='ready'" +
+                       "sources s ON s.id=c.source_id WHERE s.status='ready' AND c.active=1" +
                            (source.isEmpty() ? QString() : " AND c.source_id=?") +
                            " ORDER BY c.source_id,c.position",
                        source.isEmpty() ? QVariantList{} : QVariantList{source});
@@ -213,7 +213,7 @@ static Obj draft(Context &c) {
     auto source = db.must("sources", v.toString());
     require(str(source, "status") == "ready", 409, "请先等待所选资料解析完成。");
     auto chunks =
-        db.all("SELECT * FROM chunks WHERE source_id=? ORDER BY position", {v.toString()});
+        db.all("SELECT * FROM chunks WHERE source_id=? AND active=1 ORDER BY page,position", {v.toString()});
     require(!chunks.isEmpty(), 409, "这份资料没有可用正文。");
     auto ranked = rankChunks(str(row, "title") + " " + question, chunks, 2);
     QSet<QString> taken;
