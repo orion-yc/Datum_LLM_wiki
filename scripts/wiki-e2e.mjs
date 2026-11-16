@@ -24,9 +24,10 @@ try {
   await page.getByLabel('整理主题', { exact: true }).fill('查找边界实践 boundarybridgealias'); await page.getByLabel('希望解决的问题', { exact: true }).fill('比较教材规则和实验验证的关系。');
   await page.getByRole('checkbox', { name: /查找教材/ }).check(); await page.getByRole('checkbox', { name: /边界实验/ }).check(); await page.getByRole('button', { name: '生成可编辑草稿', exact: true }).click();
   await visible(dialog('整理 Wiki 知识页草稿')); assert.equal((await server.request('/api/wiki')).data.length, 0);
+  assert.equal(await page.getByLabel('知识页标题', { exact: true }).evaluate(input => input === document.activeElement), true, '编辑器出现时立即完成焦点定位');
   await visible(page.getByText('查找教材：使用 2/2 个片段', { exact: true })); await page.getByLabel('知识页摘要', { exact: true }).fill('把算法前提、区间不变量与实验边界整理在一起。'); await page.getByLabel('知识页标签', { exact: true }).fill('算法，边界，实验');
   await page.getByLabel('知识页正文', { exact: true }).fill('## 适用条件\n有序序列是二分查找的前提。[1]\n\n## 如何验证\n测试空数组、首尾元素和目标不存在，并核对循环不变量。[3]\n\n```cpp\nwhile (left <= right) { /* 检查区间 */ }\n```');
-  await page.getByRole('button', { name: '预览正文', exact: true }).click(); await visible(dialog('整理 Wiki 知识页草稿').locator('pre code')); await page.getByRole('button', { name: '继续编辑', exact: true }).click();
+  await page.getByRole('button', { name: '预览正文', exact: true }).click(); await visible(page.getByRole('button', { name: '继续编辑', exact: true })); await visible(dialog('整理 Wiki 知识页草稿').locator('pre code')); await page.getByRole('button', { name: '继续编辑', exact: true }).click();
   await page.getByRole('button', { name: '保存知识页草稿', exact: true }).click(); await visible(page.getByRole('heading', { name: '查找边界实践 boundarybridgealias', exact: true }));
   const id = (await page.evaluate(() => location.hash)).split('/')[2];
   await page.getByRole('button', { name: '[1]', exact: true }).first().click(); await visible(page.locator('#wiki-evidence-1[open]'));
@@ -55,4 +56,14 @@ try {
   await mobile.getByRole('button', { name: '历史版本', exact: true }).click(); await visible(mobile.getByRole('dialog', { name: '知识页版本记录', exact: true })); await mobile.getByRole('button', { name: '关闭窗口', exact: true }).click(); await mobile.screenshot({ path: join(out, 'wiki-mobile-readonly.png'), fullPage: true });
   console.log('✓ Wiki 手机阅读、代码与证据布局、只读权限和历史窗口关闭');
   assert.deepEqual(errors, []); console.log('Wiki 浏览器验收全部通过。');
+} catch (error) {
+  console.error('Wiki 验收失败时的编辑器状态：', await page.evaluate(() => ({
+    dialogs: [...document.querySelectorAll('[role="dialog"]')].map(dialog => ({
+      text: dialog.textContent, body: dialog.querySelector('textarea[rows="13"]')?.value,
+      preview: dialog.querySelector('.wiki-preview')?.textContent,
+      codeBlocks: dialog.querySelectorAll('pre code').length
+    })), alerts: [...document.querySelectorAll('[role="alert"]')].map(node => node.textContent)
+  })).catch(() => null));
+  await page.screenshot({ path: join(out, 'wiki-failure.png'), fullPage: true }).catch(() => {});
+  throw error;
 } finally { await browser.close(); await server.close(); }

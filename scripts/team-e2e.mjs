@@ -53,7 +53,7 @@ try {
   console.log('✓ 网页论文档案、矩阵编辑、真实证据、跨账号审核、评论阻断与发布');
   await reviewer.clock.install(); await reviewer.reload();
   await visible(reviewer.getByRole('button', { name: '分配任务', exact: true }));
-  await reviewer.getByRole('button', { name: '分配任务', exact: true }).click(); await reviewer.getByLabel('任务名称', { exact: true }).fill('补充统一设置实验'); await reviewer.getByLabel('任务说明', { exact: true }).fill('在相同数据集下验证两种方法。'); await reviewer.getByLabel('负责人', { exact: true }).selectOption({ label: '论文审核人 · 编辑者' }); await reviewer.getByRole('button', { name: '创建任务', exact: true }).click(); await nav(reviewer, '团队协作'); await visible(reviewer.getByRole('button', { name: '补充统一设置实验', exact: true }));
+  await reviewer.getByRole('button', { name: '分配任务', exact: true }).click(); await reviewer.getByLabel('任务名称', { exact: true }).fill('补充统一设置实验'); await reviewer.getByLabel('任务说明', { exact: true }).fill('在相同数据集下验证两种方法。'); await reviewer.getByLabel('负责人', { exact: true }).selectOption({ label: '论文审核人 · 编辑者' }); await reviewer.getByRole('button', { name: '创建任务', exact: true }).click(); await nav(reviewer, '团队协作'); await visible(reviewer.getByRole('heading', { name: '成员与权限', exact: true })); await visible(reviewer.getByRole('button', { name: '补充统一设置实验', exact: true }));
   // Hold list refreshes and PATCH responses independently to expose stale-version windows.
   const listGate = Promise.withResolvers(), listArrived = Promise.withResolvers(), writes = [];
   let pendingWrite;

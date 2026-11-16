@@ -1,4 +1,4 @@
-import { Children, cloneElement, isValidElement, createContext, useContext, useEffect, useId, useRef, useState, type ReactNode, type ReactElement, type ButtonHTMLAttributes } from 'react';
+import { Children, cloneElement, isValidElement, createContext, useContext, useLayoutEffect, useId, useRef, useState, type ReactNode, type ReactElement, type ButtonHTMLAttributes } from 'react';
 import { X, LoaderCircle, ArrowRight, BookOpen, AlertCircle, Check, Sparkles } from 'lucide-react';
 
 import type { Member } from './types';
@@ -30,10 +30,10 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
 export function Modal({ title, subtitle, children, onClose, wide = false }: { title: string; subtitle?: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null), titleId = useId(), closeRef = useRef(onClose);
   closeRef.current = onClose;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = document.activeElement as HTMLElement;
     const original = document.body.style.overflow; document.body.style.overflow = 'hidden';
-    const timer = setTimeout(() => (ref.current?.querySelector<HTMLElement>('input:not([type="hidden"]),textarea,select') || ref.current?.querySelector<HTMLElement>('button'))?.focus(), 40);
+    (ref.current?.querySelector<HTMLElement>('input:not([type="hidden"]),textarea,select') || ref.current?.querySelector<HTMLElement>('button'))?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); closeRef.current(); }
       if (e.key !== 'Tab') return;
@@ -43,7 +43,7 @@ export function Modal({ title, subtitle, children, onClose, wide = false }: { ti
       if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
     };
     document.addEventListener('keydown', onKey);
-    return () => { clearTimeout(timer); document.body.style.overflow = original; document.removeEventListener('keydown', onKey); previous?.focus(); };
+    return () => { document.body.style.overflow = original; document.removeEventListener('keydown', onKey); previous?.focus({ preventScroll: true }); };
   }, []);
   return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><div ref={ref} className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}><div className="modal-heading"><div><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><IconButton write={false} label="关闭窗口" onClick={onClose}><X size={20} /></IconButton></div>{children}</div></div>;
 }
