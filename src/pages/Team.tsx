@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Users, Plus, Copy, KeyRound, Check, MessageSquare, UserCheck } from 'lucide-react';
 import { api, useData, post, put, remove, navigate, formatDate, today } from '../api';
 import { useApp, Button, PageTitle, Field, ErrorBox, Loading, Notice, Badge, Modal, Confirm } from '../ui';
@@ -8,10 +8,29 @@ const TASK_LABELS = { todo: '待开始', doing: '进行中', done: '已完成' }
 const linkFor = (kind: string, id: string) => kind === 'wiki' ? `/wiki/${id}` : kind === 'source' ? `/library/${id}` : kind === 'comparison' ? `/papers/${id}` : kind === 'paper' ? '/papers' : kind === 'plan' ? '/plans' : '/knowledge';
 export function TaskBoard({ tasks, compact = false }: { tasks: Task[]; compact?: boolean }) {
   const { user, canEdit, isAdmin, refresh, notify } = useApp();
-  const [mine, setMine] = useState(false), [busy, setBusy] = useState('');
-  const shown = tasks.filter(t => !mine || t.assignee_id === user?.id);
-  async function status(task: Task, value: string) { setBusy(task.id); try { await api(`/api/tasks/${task.id}`, { method: 'PATCH', body: JSON.stringify({ status: value, _version: task._version }) }); refresh(); } catch (e) { notify((e as Error).message, 'error'); } finally { setBusy(''); } }
-  return <div className="task-board"><div className="section-heading"><h3>{compact ? '关联任务' : '协作任务看板'}</h3><label className="check-label"><input type="checkbox" checked={mine} onChange={e => setMine(e.target.checked)} />只看分配给我</label></div>{!shown.length && <p className="muted">暂无任务。在资料、知识点、计划或论文对比中，可以分配协作任务。</p>}<div className={compact ? 'task-list' : 'task-columns'}>{(['todo', 'doing', 'done'] as const).map(column => <section key={column}><div className="task-column-title">{TASK_LABELS[column]} <Badge tone="gray">{shown.filter(t => t.status === column).length}</Badge></div>{shown.filter(t => t.status === column).map(task => <article className="task-card" key={task.id}><button className="text-button" onClick={() => navigate(linkFor(task.kind, task.target_id))}>{task.title}</button><p>{task.description}</p><div className="task-meta"><span><UserCheck size={13} />{task.assignee_name || '未分配'}</span><span className={task.due_date && task.due_date < today() && column !== 'done' ? 'overdue' : ''}>{task.due_date ? `${formatDate(task.due_date)}截止` : '未设截止日期'}</span></div>{canEdit && (isAdmin || task.created_by === user?.id || task.assignee_id === user?.id) && <select aria-label={`${task.title}任务状态`} disabled={busy === task.id} value={task.status} onChange={e => void status(task, e.target.value)}>{Object.entries(TASK_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>}{canEdit && (isAdmin || task.created_by === user?.id) && <Button variant="ghost" onClick={async () => { try { await remove(`/api/tasks/${task.id}`); refresh(); } catch (e) { notify((e as Error).message, 'error'); } }}>删除任务</Button>}</article>)}</section>)}</div></div>;
+  const [mine, setMine] = useState(false), [busy, setBusy] = useState<Set<string>>(new Set());
+  const [saved, setSaved] = useState<Record<string, Task>>({});
+  const pending = useRef(new Set<string>());
+  // Keep acknowledged versions until polling catches up, including older in-flight list responses.
+  const shown = tasks.map(task => {
+    const updated = saved[task.id];
+    return updated && (updated._version ?? 0) > (task._version ?? 0) ? { ...task, ...updated } : task;
+  }).filter(t => !mine || t.assignee_id === user?.id);
+  async function status(task: Task, value: string) {
+    if (pending.current.has(task.id)) return;
+    pending.current.add(task.id); setBusy(new Set(pending.current));
+    try {
+      const updated = await api<Task>(`/api/tasks/${task.id}`, {
+        method: 'PATCH', body: JSON.stringify({ status: value, _version: task._version })
+      });
+      setSaved(current => ({ ...current, [task.id]: updated }));
+    } catch (e) {
+      notify((e as Error).message, 'error');
+    } finally {
+      pending.current.delete(task.id); setBusy(new Set(pending.current));
+    }
+  }
+  return <div className="task-board"><div className="section-heading"><h3>{compact ? '关联任务' : '协作任务看板'}</h3><label className="check-label"><input type="checkbox" checked={mine} onChange={e => setMine(e.target.checked)} />只看分配给我</label></div>{!shown.length && <p className="muted">暂无任务。在资料、知识点、计划或论文对比中，可以分配协作任务。</p>}<div className={compact ? 'task-list' : 'task-columns'}>{(['todo', 'doing', 'done'] as const).map(column => <section key={column}><div className="task-column-title">{TASK_LABELS[column]} <Badge tone="gray">{shown.filter(t => t.status === column).length}</Badge></div>{shown.filter(t => t.status === column).map(task => <article className="task-card" key={task.id}><button className="text-button" onClick={() => navigate(linkFor(task.kind, task.target_id))}>{task.title}</button><p>{task.description}</p><div className="task-meta"><span><UserCheck size={13} />{task.assignee_name || '未分配'}</span><span className={task.due_date && task.due_date < today() && column !== 'done' ? 'overdue' : ''}>{task.due_date ? `${formatDate(task.due_date)}截止` : '未设截止日期'}</span></div>{canEdit && (isAdmin || task.created_by === user?.id || task.assignee_id === user?.id) && <select aria-label={`${task.title}任务状态`} disabled={busy.has(task.id)} value={task.status} onChange={e => void status(task, e.target.value)}>{Object.entries(TASK_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>}{canEdit && (isAdmin || task.created_by === user?.id) && <Button variant="ghost" disabled={busy.has(task.id)} onClick={async () => { try { await remove(`/api/tasks/${task.id}`); refresh(); } catch (e) { notify((e as Error).message, 'error'); } }}>删除任务</Button>}</article>)}</section>)}</div></div>;
 }
 export function Collaboration({ kind, targetId }: { kind: string; targetId: string }) {
   const { revision, refresh, notify, user, canEdit, isAdmin } = useApp();

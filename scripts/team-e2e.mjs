@@ -16,7 +16,7 @@ try {
   await page.goto(server.base); await page.getByLabel('显示姓名', { exact: true }).fill('团队所有者'); await page.getByLabel('空间名称', { exact: true }).fill('证据研究小组'); await page.getByLabel('设置访问密码', { exact: true }).fill('owner-browser-password'); await page.getByLabel('确认访问密码', { exact: true }).fill('owner-browser-password'); await page.getByRole('button', { name: '创建我的知识空间', exact: true }).click();
   await nav(page, '团队协作'); await visible(page.getByRole('heading', { name: '成员与权限', exact: true }));
   await page.getByRole('button', { name: '生成邀请链接', exact: true }).click(); const invitation = page.getByLabel('一次性邀请链接', { exact: true }); await visible(invitation); const invitationUrl = await invitation.inputValue();
-  const reviewer = await pageFor(); await reviewer.goto(invitationUrl); await reviewer.getByLabel('成员账号', { exact: true }).fill('reviewer'); await reviewer.getByLabel('显示姓名', { exact: true }).fill('论文审核人'); await reviewer.getByLabel('设置访问密码', { exact: true }).fill('reviewer-browser-password'); await reviewer.getByLabel('确认访问密码', { exact: true }).fill('reviewer-browser-password'); await reviewer.getByRole('button', { name: '创建账号并加入团队', exact: true }).click(); await visible(reviewer.getByRole('heading', { name: '成员与权限', exact: true }));
+  const reviewer = await pageFor(); await reviewer.clock.install(); await reviewer.goto(invitationUrl); await reviewer.getByLabel('成员账号', { exact: true }).fill('reviewer'); await reviewer.getByLabel('显示姓名', { exact: true }).fill('论文审核人'); await reviewer.getByLabel('设置访问密码', { exact: true }).fill('reviewer-browser-password'); await reviewer.getByLabel('确认访问密码', { exact: true }).fill('reviewer-browser-password'); await reviewer.getByRole('button', { name: '创建账号并加入团队', exact: true }).click(); await visible(reviewer.getByRole('heading', { name: '成员与权限', exact: true }));
   console.log('✓ 网页初始化团队、一次性邀请与独立账号加入');
   await server.request('/api/auth/login', { method: 'POST', body: { password: 'owner-browser-password' } });
   const sources = [];
@@ -37,9 +37,66 @@ try {
   assert.equal((await server.request(`/api/comparisons/${comparisonId}`)).data.status, 'published');
   await reviewer.screenshot({ path: join(out, 'research-published.png'), fullPage: true });
   console.log('✓ 网页论文档案、矩阵编辑、真实证据、跨账号审核、评论阻断与发布');
-  await reviewer.getByRole('button', { name: '分配任务', exact: true }).click(); await reviewer.getByLabel('任务名称', { exact: true }).fill('补充统一设置实验'); await reviewer.getByLabel('任务说明', { exact: true }).fill('在相同数据集下验证两种方法。'); await reviewer.getByLabel('负责人', { exact: true }).selectOption({ label: '论文审核人 · 编辑者' }); await reviewer.getByRole('button', { name: '创建任务', exact: true }).click(); await nav(reviewer, '团队协作'); await visible(reviewer.getByRole('button', { name: '补充统一设置实验', exact: true })); await reviewer.getByLabel('补充统一设置实验任务状态', { exact: true }).selectOption('doing'); await reviewer.getByLabel('补充统一设置实验任务状态', { exact: true }).selectOption('done'); await visible(reviewer.locator('.task-columns section').last().getByRole('button', { name: '补充统一设置实验', exact: true }));
+  await reviewer.getByRole('button', { name: '分配任务', exact: true }).click(); await reviewer.getByLabel('任务名称', { exact: true }).fill('补充统一设置实验'); await reviewer.getByLabel('任务说明', { exact: true }).fill('在相同数据集下验证两种方法。'); await reviewer.getByLabel('负责人', { exact: true }).selectOption({ label: '论文审核人 · 编辑者' }); await reviewer.getByRole('button', { name: '创建任务', exact: true }).click(); await nav(reviewer, '团队协作'); await visible(reviewer.getByRole('button', { name: '补充统一设置实验', exact: true }));
+  // Hold list refreshes and PATCH responses independently to expose stale-version windows.
+  const listGate = Promise.withResolvers(), listArrived = Promise.withResolvers(), writes = [];
+  let pendingWrite;
+  const listRoute = async route => {
+    const response = await route.fetch(); listArrived.resolve();
+    await listGate.promise; await route.fulfill({ response });
+  };
+  const writeRoute = async route => {
+    writes.push(route.request().postDataJSON());
+    const pending = pendingWrite;
+    const response = pending.fail ? null : await route.fetch();
+    pending.arrived.resolve(response);
+    await pending.release.promise;
+    if (pending.fail) await route.fulfill({ status: 503, json: { error: '测试：任务保存暂时不可用。' } });
+    else await route.fulfill({ response });
+  };
+  await reviewer.route('**/api/tasks', listRoute);
+  await reviewer.route('**/api/tasks/*', writeRoute);
+  const taskSelect = reviewer.getByLabel('补充统一设置实验任务状态', { exact: true });
+  const taskInColumn = status => reviewer.locator('.task-columns section').nth(['todo', 'doing', 'done'].indexOf(status)).getByRole('button', { name: '补充统一设置实验', exact: true });
+  async function moveTask(status, version, fail = false) {
+    pendingWrite = { arrived: Promise.withResolvers(), release: Promise.withResolvers(), fail };
+    await taskSelect.selectOption(status);
+    const response = await pendingWrite.arrived.promise;
+    try {
+      assert.equal(await taskSelect.isDisabled(), true, '保存响应返回前不允许重复提交');
+      if (response) assert.equal(response.status(), 200, await response.text());
+    } finally { pendingWrite.release.resolve(); }
+    if (fail) {
+      await visible(reviewer.getByRole('alert').filter({ hasText: '测试：任务保存暂时不可用。' }));
+      await visible(taskInColumn('doing'));
+    } else {
+      await visible(taskInColumn(status));
+      assert.equal(await taskSelect.inputValue(), status);
+      const persisted = (await server.request('/api/tasks')).data.find(task => task.title === '补充统一设置实验');
+      assert.equal(persisted.status, status); assert.equal(persisted._version, version);
+    }
+  }
+  try {
+    await reviewer.clock.fastForward(10000); await listArrived.promise;
+    await moveTask('doing', 2);
+    await visible(reviewer.locator('.task-card .task-meta').getByText('论文审核人', { exact: true }));
+    await moveTask('done', 2, true);
+    await moveTask('done', 3);
+    assert.deepEqual(writes.map(({ status, _version }) => ({ status, _version })), [
+      { status: 'doing', _version: 1 }, { status: 'done', _version: 2 }, { status: 'done', _version: 2 }
+    ]);
+    const staleList = reviewer.waitForResponse(response => response.url() === `${server.base}/api/tasks`);
+    listGate.resolve(); await (await staleList).finished();
+    await reviewer.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await visible(taskInColumn('done'));
+    assert.equal(await taskSelect.inputValue(), 'done', '迟到的旧列表不能撤回已保存的状态');
+  } finally {
+    pendingWrite?.release.resolve(); listGate.resolve();
+    await reviewer.unroute('**/api/tasks', listRoute); await reviewer.unroute('**/api/tasks/*', writeRoute);
+  }
+  await reviewer.reload(); await visible(taskInColumn('done'));
   await reviewer.screenshot({ path: join(out, 'team-tasks.png'), fullPage: true });
-  console.log('✓ 网页分配协作任务、负责人状态推进与团队看板');
+  console.log('✓ 网页任务状态推进：慢响应、版本递增、保存失败重试与刷新持久化');
   await page.getByRole('button', { name: '读取最新版本', exact: true }).click(); await page.getByRole('button', { name: '历史版本', exact: true }).click(); await visible(page.getByRole('heading', { name: '对比版本记录', exact: true })); await page.getByRole('button', { name: '恢复为新草稿', exact: true }).last().click(); await page.getByRole('button', { name: '恢复版本', exact: true }).click(); await visible(page.getByText('草稿', { exact: true }));
   const invite = (await server.request('/api/team/invitations', { method: 'POST', body: { role: 'viewer' } })).data;
   const viewer = await pageFor(390); await viewer.goto(`${server.base}/#/join?token=${invite.token}`); await viewer.getByLabel('成员账号', { exact: true }).fill('viewer'); await viewer.getByLabel('显示姓名', { exact: true }).fill('只读成员'); await viewer.getByLabel('设置访问密码', { exact: true }).fill('viewer-browser-password'); await viewer.getByLabel('确认访问密码', { exact: true }).fill('viewer-browser-password'); await viewer.getByRole('button', { name: '创建账号并加入团队', exact: true }).click(); await visible(viewer.getByRole('heading', { name: '成员与权限', exact: true })); await viewer.goto(`${server.base}/#/papers/${comparisonId}`); await visible(viewer.getByRole('heading', { name: '查找方法证据对比', exact: true })); assert.equal(await viewer.getByRole('button', { name: '保存对比', exact: true }).count(), 0); assert.equal(await viewer.getByRole('button', { name: '发表评论', exact: true }).count(), 0); assert.ok(await viewer.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)); await viewer.screenshot({ path: join(out, 'research-mobile-readonly.png'), fullPage: true });
