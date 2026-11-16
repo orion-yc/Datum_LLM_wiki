@@ -112,9 +112,10 @@ test('Wiki 模型：受限多来源输入、引用格式校验、失败不改库
   });
   await new Promise(r => mock.listen(0, '127.0.0.1', r)); t.after(() => new Promise(r => mock.close(r)));
   const source = await upload('长篇资料.md', Array.from({ length: 20 }, (_, i) => `## 第${i}节\n这是不同位置的证据片段${i}，描述测试方法和验证前提。`).join('\n'));
-  await call('/api/settings', 'PUT', { baseUrl: `http://127.0.0.1:${mock.address().port}/v1`, model: 'wiki-mock' });
+  await call('/api/settings', 'PUT', { baseUrl: `http://127.0.0.1:${mock.address().port}/v1`, model: 'wiki-mock', reasoningEffort: 'xhigh' });
   const options = { title: '验证方法', source_ids: [source.id], question: '适用条件' };
   const proposal = await call('/api/wiki/draft', 'POST', options); assert.equal(proposal.status, 200);
+  assert.equal(payload.reasoning_effort, 'xhigh'); assert.equal(Object.hasOwn(payload, 'temperature'), false);
   assert.equal(proposal.data.generation_mode, 'model'); assert.equal(proposal.data.coverage[0].used_chunks, 4);
   const evidence = JSON.parse(payload.messages[1].content).evidence; assert.equal(evidence.length, 4); assert.ok(evidence.some(e => e.heading === '第19节'));
   invalid = true; assert.equal((await call('/api/wiki/draft', 'POST', options)).status, 502);

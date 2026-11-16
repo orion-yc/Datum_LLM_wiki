@@ -538,8 +538,10 @@ Arr rankChunks(const QString &question, const Arr &chunks, int limit) {
 }
 Obj modelSettings(Database &db) {
   auto base = db.config("model_base_url"), model = db.config("model_name");
+  auto effort = db.config("model_reasoning_effort");
   return {{"baseUrl", base},
           {"model", model},
+          {"reasoningEffort", effort.isEmpty() ? "default" : effort},
           {"keyConfigured", !db.config("model_api_key").isEmpty()},
           {"configured", !base.isEmpty() && !model.isEmpty()}};
 }
@@ -554,28 +556,58 @@ QString complete(Database &db, const Arr &messages, bool test) {
   auto key = decrypt(db.config("model_api_key"));
   if (!key.isEmpty())
     request.setRawHeader("Authorization", ("Bearer " + key).toUtf8());
-  auto reply = network.post(request, pack(Obj{{"model", str(settings, "model")},
-                                              {"messages", messages},
-                                              {"temperature", 0.25},
-                                              {"max_tokens", test ? 16 : 4000}})
-                                         .toUtf8());
-  QEventLoop loop;
-  QTimer timer;
-  timer.setSingleShot(true);
-  QObject::connect(&timer, &QTimer::timeout, reply, &QNetworkReply::abort);
-  QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-  timer.start(test ? 20000 : 60000);
-  loop.exec();
-  auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-  auto payload = reply->readAll();
-  auto error = reply->error();
-  reply->deleteLater();
-  require(status >= 200 && status < 300, 502,
-          status ? QString("模型服务返回 HTTP %1，请检查模型名称、密钥和服务额度。").arg(status)
-                 : "无法连接模型服务或响应超时。");
-  require(error == QNetworkReply::NoError && payload.size() <= 4 * 1024 * 1024, 502,
-          "模型响应无效。");
-  auto doc = QJsonDocument::fromJson(payload);
+  auto effort = str(settings, "reasoningEffort");
+  bool explicitEffort = effort != "default";
+  Obj body{{"model", str(settings, "model")}, {"messages", messages}};
+  if (explicitEffort) {
+    body["reasoning_effort"] = effort;
+    // Reasoning shares the completion budget; temperature is rejected by some models.
+    body["max_completion_tokens"] = test ? 4096 : 32768;
+  } else {
+    body["temperature"] = 0.25;
+    body["max_tokens"] = test ? 16 : 4000;
+  }
+  QJsonDocument doc;
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    auto reply = network.post(request, pack(body).toUtf8());
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&timer, &QTimer::timeout, reply, &QNetworkReply::abort);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    timer.start(explicitEffort ? (test ? 60000 : 180000) : (test ? 20000 : 60000));
+    loop.exec();
+    auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    auto payload = reply->readAll();
+    auto error = reply->error();
+    reply->deleteLater();
+    require(payload.size() <= 4 * 1024 * 1024, 502, "模型响应过大。");
+    doc = QJsonDocument::fromJson(payload);
+    if (status == 400 || status == 422) {
+      auto upstream = doc.object()["error"].toObject();
+      auto message = upstream["message"].toString().toLower();
+      auto mentions = [&](const QString &parameter) {
+        return upstream["param"].toString() == parameter || message.contains(parameter);
+      };
+      require(!explicitEffort || !mentions("reasoning_effort"), 502,
+              "模型服务不接受所选推理强度，请选择该模型支持的强度，或改为“服务商默认”。");
+      static const QRegularExpression unsupported(
+          "unknown|unrecognized|unexpected|unsupported|not supported|not permitted|not allowed|不支持|未识别");
+      auto code = upstream["code"].toString().toLower();
+      // Retry only an explicitly unsupported token parameter, preserving the chosen effort.
+      if (explicitEffort && attempt == 0 && mentions("max_completion_tokens") &&
+          (unsupported.match(message).hasMatch() || code == "unsupported_parameter" ||
+           code == "unknown_parameter")) {
+        body["max_tokens"] = body.take("max_completion_tokens");
+        continue;
+      }
+    }
+    require(status >= 200 && status < 300, 502,
+            status ? QString("模型服务返回 HTTP %1，请检查模型名称、密钥和服务额度。").arg(status)
+                   : "无法连接模型服务或响应超时。");
+    require(error == QNetworkReply::NoError, 502, "模型响应无效。");
+    break;
+  }
   auto choices = doc.object()["choices"].toArray();
   require(!choices.isEmpty(), 502, "模型服务未返回文本回答。");
   auto content = choices[0].toObject()["message"].toObject()["content"].toString().trimmed();

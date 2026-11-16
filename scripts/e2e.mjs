@@ -1,11 +1,12 @@
 import { chromium } from 'playwright';
+import { createServer } from 'node:http';
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { testServer, projectRoot } from '../tests/helpers.mjs';
 
 const server = await testServer();
-let browser;
+let browser, modelMock;
 try { browser = await chromium.launch({ headless: true }); } catch (error) { await server.close(); throw error; }
 const context = await browser.newContext({ viewport: { width: 1440, height: 1050 }, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' });
 const page = await context.newPage();
@@ -102,6 +103,49 @@ try {
 
   await page.getByRole('button', { name: '空间设置', exact: true }).click();
   await visible(page.getByLabel('API 基础地址'));
+  const modelCalls = []; let unsupportedEffort = false;
+  modelMock = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    modelCalls.push(JSON.parse(raw)); res.setHeader('Content-Type', 'application/json');
+    if (unsupportedEffort) { res.writeHead(400); res.end(JSON.stringify({ error: { param: 'reasoning_effort', message: 'Unsupported reasoning_effort' } })); }
+    else res.end(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }));
+  });
+  await new Promise(resolve => modelMock.listen(0, '127.0.0.1', resolve));
+  const effortSelect = page.getByLabel('推理强度', { exact: true });
+  assert.equal(await effortSelect.inputValue(), 'default');
+  await page.getByLabel('API 基础地址').fill('http://127.0.0.1:' + modelMock.address().port + '/v1');
+  await page.getByLabel('模型名称', { exact: true }).fill('browser-reasoning-model');
+  await effortSelect.selectOption('high');
+  async function saveModel(test = false) {
+    const saved = page.waitForResponse(response => response.url() === server.base + '/api/settings' && response.request().method() === 'PUT');
+    const tested = test ? page.waitForResponse(response => response.url() === server.base + '/api/settings/test') : null;
+    await page.getByRole('button', { name: test ? '保存并测试连接' : '保存设置', exact: true }).click();
+    const result = await saved; assert.equal(result.status(), 200); await result.finished();
+    if (tested) { const response = await tested; await response.finished(); return response; }
+    return result;
+  }
+  assert.equal((await saveModel(true)).status(), 200);
+  assert.equal(modelCalls.at(-1).reasoning_effort, 'high');
+  assert.equal(Object.hasOwn(modelCalls.at(-1), 'temperature'), false);
+  await page.reload(); await visible(effortSelect);
+  assert.equal(await effortSelect.inputValue(), 'high', '网页刷新后保留推理强度');
+  await page.screenshot({ path: join(out, 'model-reasoning-settings.png'), fullPage: true });
+  unsupportedEffort = true;
+  await effortSelect.selectOption('xhigh');
+  const beforeModelCalls = modelCalls.length;
+  assert.equal((await saveModel(true)).status(), 502);
+  await visible(page.getByRole('alert').filter({ hasText: '模型服务不接受所选推理强度' }));
+  assert.equal(modelCalls.length, beforeModelCalls + 1);
+  assert.equal(modelCalls.at(-1).reasoning_effort, 'xhigh');
+  unsupportedEffort = false;
+  await effortSelect.selectOption('default');
+  assert.equal((await saveModel(true)).status(), 200);
+  assert.equal(Object.hasOwn(modelCalls.at(-1), 'reasoning_effort'), false);
+  await page.reload(); await visible(effortSelect);
+  assert.equal(await effortSelect.inputValue(), 'default');
+  await page.getByLabel('API 基础地址').fill(''); await page.getByLabel('模型名称', { exact: true }).fill('');
+  await saveModel(); await visible(effortSelect);
+  console.log('✓ 网页推理强度选择、保存测试、刷新持久化、错误提示与服务商默认');
   const downloadPromise = page.waitForEvent('download'); await page.getByRole('link', { name: '导出学习记录' }).click(); const download = await downloadPromise;
   assert.match(download.suggestedFilename(), /zhixu-learning.*\.json/);
   console.log('✓ 网页设置与数据导出');
@@ -141,4 +185,4 @@ try {
   console.error('浏览器验收失败:', error);
   console.error('Browser URL:', page.url());
   process.exitCode = 1;
-} finally { await browser.close(); await server.close(); }
+} finally { await browser.close(); await server.close(); if (modelMock) await new Promise(resolve => modelMock.close(resolve)); }

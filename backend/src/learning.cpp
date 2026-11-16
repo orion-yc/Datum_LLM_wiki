@@ -802,9 +802,13 @@ bool learningRoutes(Context &c) {
                    !url.hasFragment()),
               400, "请输入有效的 HTTP(S) API 基础地址。");
       require(base.isEmpty() == model.isEmpty(), 400, "地址与模型名称需要同时填写或清空。");
+      auto effort = choice(c.body, "reasoningEffort",
+                           {"default", "none", "minimal", "low", "medium", "high", "xhigh", "max"},
+                           str(modelSettings(db), "reasoningEffort"));
       Tx tx(db);
       db.config("model_base_url", base);
       db.config("model_name", model);
+      db.config("model_reasoning_effort", effort);
       if (c.body["clearKey"].toBool())
         db.config("model_api_key", "");
       else if (!text(c.body, "apiKey", 2000).isEmpty())

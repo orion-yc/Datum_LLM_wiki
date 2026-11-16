@@ -116,7 +116,13 @@ try {
   await page.getByRole('button', { name: '读取最新版本', exact: true }).click(); await page.getByRole('button', { name: '历史版本', exact: true }).click(); await visible(page.getByRole('heading', { name: '对比版本记录', exact: true })); await page.getByRole('button', { name: '恢复为新草稿', exact: true }).last().click(); await page.getByRole('button', { name: '恢复版本', exact: true }).click(); await visible(page.getByText('草稿', { exact: true }));
   const invite = (await server.request('/api/team/invitations', { method: 'POST', body: { role: 'viewer' } })).data;
   const viewer = await pageFor(390); await viewer.goto(`${server.base}/#/join?token=${invite.token}`); await viewer.getByLabel('成员账号', { exact: true }).fill('viewer'); await viewer.getByLabel('显示姓名', { exact: true }).fill('只读成员'); await viewer.getByLabel('设置访问密码', { exact: true }).fill('viewer-browser-password'); await viewer.getByLabel('确认访问密码', { exact: true }).fill('viewer-browser-password'); await viewer.getByRole('button', { name: '创建账号并加入团队', exact: true }).click(); await visible(viewer.getByRole('heading', { name: '成员与权限', exact: true })); await viewer.goto(`${server.base}/#/papers/${comparisonId}`); await visible(viewer.getByRole('heading', { name: '查找方法证据对比', exact: true })); assert.equal(await viewer.getByRole('button', { name: '保存对比', exact: true }).count(), 0); assert.equal(await viewer.getByRole('button', { name: '发表评论', exact: true }).count(), 0); assert.ok(await viewer.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)); await viewer.screenshot({ path: join(out, 'research-mobile-readonly.png'), fullPage: true });
-  console.log('✓ 历史恢复、只读成员与移动端矩阵浏览');
+  await viewer.getByRole('button', { name: '展开导航', exact: true }).click();
+  await viewer.getByRole('button', { name: '空间设置', exact: true }).click();
+  await visible(viewer.getByLabel('推理强度', { exact: true }));
+  assert.equal(await viewer.getByLabel('推理强度', { exact: true }).isDisabled(), true);
+  assert.ok(await viewer.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await viewer.screenshot({ path: join(out, 'model-reasoning-mobile-readonly.png'), fullPage: true, animations: 'disabled' });
+  console.log('✓ 历史恢复、只读成员、移动端矩阵与模型设置权限');
   assert.deepEqual(errors, []); console.log('团队与论文浏览器验收全部通过。');
 } catch (error) {
   console.error('团队验收失败时的接口错误：', JSON.stringify(failedRequests));

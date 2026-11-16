@@ -37,6 +37,7 @@ test('论文模型生成：逐篇归纳、上游失败不落库、并发修改�
   const mock = createServer(async (req, res) => {
     let raw = ''; for await (const part of req) raw += part;
     const body = JSON.parse(raw);
+    assert.equal(body.reasoning_effort, 'medium'); assert.equal(Object.hasOwn(body, 'temperature'), false);
     if (block) { block = false; arrived(); await gate; }
     if (fail) { res.writeHead(401); res.end('{}'); return; }
     const payload = JSON.parse(body.messages[1].content);
@@ -47,7 +48,7 @@ test('论文模型生成：逐篇归纳、上游失败不落库、并发修改�
   const paperIds = [];
   for (const name of ['模型论文甲', '模型论文乙']) { const source = await upload(editor, name, `# ${name}\n使用有序索引验证检索方法。\n## 指标\n记录实验环境与误差区间。`); paperIds.push((await editor('/api/papers', 'POST', { source_id: source.id, title: name })).data.id); }
   let comparison = (await editor('/api/comparisons', 'POST', { title: '模型证据归纳', question: '如何比较实验设置', paper_ids: paperIds, dimensions: ['方法', '指标'], cells: [], conclusion: '初始结论' })).data;
-  assert.equal((await owner('/api/settings', 'PUT', { baseUrl: `http://127.0.0.1:${mock.address().port}/v1`, model: 'paper-mock' })).status, 200);
+  assert.equal((await owner('/api/settings', 'PUT', { baseUrl: `http://127.0.0.1:${mock.address().port}/v1`, model: 'paper-mock', reasoningEffort: 'medium' })).status, 200);
   comparison = (await editor(`/api/comparisons/${comparison.id}/generate`, 'POST', { _version: comparison._version })).data;
   assert.equal(comparison.generation_mode, 'model'); assert.ok(comparison.cells.every(cell => cell.content.includes('依据所附原文') && cell.citations.length));
   const previousVersion = comparison._version; fail = true;
@@ -68,8 +69,8 @@ test('成员权限：邀请单次使用与撤销、角色边界、重置密码�
   const ownerUser = (await owner('/api/auth')).data.user;
   assert.equal((await admin(`/api/team/members/${ownerUser.id}`, 'PATCH', { active: false })).status, 403);
   assert.equal((await viewer('/api/sources/sample', 'POST')).status, 403);
-  assert.equal((await viewer('/api/settings', 'PUT', { baseUrl: '', model: '' })).status, 403);
-  assert.equal((await editor('/api/settings', 'PUT', { baseUrl: '', model: '' })).status, 403);
+  assert.equal((await viewer('/api/settings', 'PUT', { baseUrl: '', model: '', reasoningEffort: 'high' })).status, 403);
+  assert.equal((await editor('/api/settings', 'PUT', { baseUrl: '', model: '', reasoningEffort: 'high' })).status, 403);
   assert.equal((await viewer('/api/export')).status, 403);
   assert.equal((await viewer('/api/team/profile', 'PUT', { name: '只读研究员' })).status, 200);
   assert.ok(!(JSON.stringify((await viewer('/api/team')).data).includes('password')));
