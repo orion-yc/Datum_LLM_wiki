@@ -7,8 +7,17 @@ import { testServer, projectRoot } from '../tests/helpers.mjs';
 const server = await testServer();
 const browser = await chromium.launch({ headless: true });
 const out = join(projectRoot, 'test-results'); await mkdir(out, { recursive: true });
-const errors = [];
-async function pageFor(width = 1440) { const context = await browser.newContext({ viewport: { width, height: 1080 }, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' }); const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message)); return page; }
+const errors = [], pages = [], failedRequests = [];
+async function pageFor(width = 1440) {
+  const context = await browser.newContext({ viewport: { width, height: 1080 }, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' });
+  const page = await context.newPage(); pages.push(page);
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('response', async response => {
+    if (response.status() >= 400 && new URL(response.url()).pathname.startsWith('/api/'))
+      failedRequests.push({ path: new URL(response.url()).pathname, status: response.status(), body: await response.text().catch(() => '') });
+  });
+  return page;
+}
 const page = await pageFor();
 const nav = async (page, name) => page.getByRole('navigation', { name: '主要功能' }).getByRole('button', { name, exact: true }).click();
 const visible = async locator => locator.waitFor({ state: 'visible', timeout: 15000 });
@@ -16,7 +25,7 @@ try {
   await page.goto(server.base); await page.getByLabel('显示姓名', { exact: true }).fill('团队所有者'); await page.getByLabel('空间名称', { exact: true }).fill('证据研究小组'); await page.getByLabel('设置访问密码', { exact: true }).fill('owner-browser-password'); await page.getByLabel('确认访问密码', { exact: true }).fill('owner-browser-password'); await page.getByRole('button', { name: '创建我的知识空间', exact: true }).click();
   await nav(page, '团队协作'); await visible(page.getByRole('heading', { name: '成员与权限', exact: true }));
   await page.getByRole('button', { name: '生成邀请链接', exact: true }).click(); const invitation = page.getByLabel('一次性邀请链接', { exact: true }); await visible(invitation); const invitationUrl = await invitation.inputValue();
-  const reviewer = await pageFor(); await reviewer.clock.install(); await reviewer.goto(invitationUrl); await reviewer.getByLabel('成员账号', { exact: true }).fill('reviewer'); await reviewer.getByLabel('显示姓名', { exact: true }).fill('论文审核人'); await reviewer.getByLabel('设置访问密码', { exact: true }).fill('reviewer-browser-password'); await reviewer.getByLabel('确认访问密码', { exact: true }).fill('reviewer-browser-password'); await reviewer.getByRole('button', { name: '创建账号并加入团队', exact: true }).click(); await visible(reviewer.getByRole('heading', { name: '成员与权限', exact: true }));
+  const reviewer = await pageFor(); await reviewer.goto(invitationUrl); await reviewer.getByLabel('成员账号', { exact: true }).fill('reviewer'); await reviewer.getByLabel('显示姓名', { exact: true }).fill('论文审核人'); await reviewer.getByLabel('设置访问密码', { exact: true }).fill('reviewer-browser-password'); await reviewer.getByLabel('确认访问密码', { exact: true }).fill('reviewer-browser-password'); await reviewer.getByRole('button', { name: '创建账号并加入团队', exact: true }).click(); await visible(reviewer.getByRole('heading', { name: '成员与权限', exact: true }));
   console.log('✓ 网页初始化团队、一次性邀请与独立账号加入');
   await server.request('/api/auth/login', { method: 'POST', body: { password: 'owner-browser-password' } });
   const sources = [];
@@ -32,11 +41,18 @@ try {
   await page.getByRole('button', { name: '提交审核', exact: true }).click(); await visible(page.getByText('审核中', { exact: true }));
   await reviewer.goto(`${server.base}/#/papers/${comparisonId}`); await visible(reviewer.getByRole('button', { name: '审核通过并发布', exact: true }));
   await reviewer.getByLabel('协作评论', { exact: true }).fill('已核对证据，实验设置差异需要明确保留。'); await reviewer.getByRole('button', { name: '发表评论', exact: true }).click(); await visible(reviewer.getByText('已核对证据，实验设置差异需要明确保留。', { exact: true }));
-  await reviewer.getByRole('button', { name: '审核通过并发布', exact: true }).click(); await visible(reviewer.getByText('还有未解决的审核评论，请处理后再发布。', { exact: true }));
+  const blockedPublication = reviewer.waitForResponse(response => response.url() === `${server.base}/api/comparisons/${comparisonId}/status` && response.request().method() === 'POST');
+  await reviewer.getByRole('button', { name: '审核通过并发布', exact: true }).click();
+  const blockedResponse = await blockedPublication;
+  assert.equal(blockedResponse.status(), 409, await blockedResponse.text());
+  assert.equal((await blockedResponse.json()).error, '还有未解决的审核评论，请处理后再发布。');
+  await visible(reviewer.getByText('还有未解决的审核评论，请处理后再发布。', { exact: true }));
   await reviewer.getByRole('button', { name: '标记已解决', exact: true }).click(); await visible(reviewer.getByRole('button', { name: '重新打开', exact: true })); await reviewer.getByRole('button', { name: '审核通过并发布', exact: true }).click(); await visible(reviewer.getByText('已发布', { exact: true }));
   assert.equal((await server.request(`/api/comparisons/${comparisonId}`)).data.status, 'published');
   await reviewer.screenshot({ path: join(out, 'research-published.png'), fullPage: true });
   console.log('✓ 网页论文档案、矩阵编辑、真实证据、跨账号审核、评论阻断与发布');
+  await reviewer.clock.install(); await reviewer.reload();
+  await visible(reviewer.getByRole('button', { name: '分配任务', exact: true }));
   await reviewer.getByRole('button', { name: '分配任务', exact: true }).click(); await reviewer.getByLabel('任务名称', { exact: true }).fill('补充统一设置实验'); await reviewer.getByLabel('任务说明', { exact: true }).fill('在相同数据集下验证两种方法。'); await reviewer.getByLabel('负责人', { exact: true }).selectOption({ label: '论文审核人 · 编辑者' }); await reviewer.getByRole('button', { name: '创建任务', exact: true }).click(); await nav(reviewer, '团队协作'); await visible(reviewer.getByRole('button', { name: '补充统一设置实验', exact: true }));
   // Hold list refreshes and PATCH responses independently to expose stale-version windows.
   const listGate = Promise.withResolvers(), listArrived = Promise.withResolvers(), writes = [];
@@ -102,4 +118,8 @@ try {
   const viewer = await pageFor(390); await viewer.goto(`${server.base}/#/join?token=${invite.token}`); await viewer.getByLabel('成员账号', { exact: true }).fill('viewer'); await viewer.getByLabel('显示姓名', { exact: true }).fill('只读成员'); await viewer.getByLabel('设置访问密码', { exact: true }).fill('viewer-browser-password'); await viewer.getByLabel('确认访问密码', { exact: true }).fill('viewer-browser-password'); await viewer.getByRole('button', { name: '创建账号并加入团队', exact: true }).click(); await visible(viewer.getByRole('heading', { name: '成员与权限', exact: true })); await viewer.goto(`${server.base}/#/papers/${comparisonId}`); await visible(viewer.getByRole('heading', { name: '查找方法证据对比', exact: true })); assert.equal(await viewer.getByRole('button', { name: '保存对比', exact: true }).count(), 0); assert.equal(await viewer.getByRole('button', { name: '发表评论', exact: true }).count(), 0); assert.ok(await viewer.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)); await viewer.screenshot({ path: join(out, 'research-mobile-readonly.png'), fullPage: true });
   console.log('✓ 历史恢复、只读成员与移动端矩阵浏览');
   assert.deepEqual(errors, []); console.log('团队与论文浏览器验收全部通过。');
+} catch (error) {
+  console.error('团队验收失败时的接口错误：', JSON.stringify(failedRequests));
+  await Promise.allSettled(pages.map((page, index) => page.screenshot({ path: join(out, `team-failure-${index}.png`), fullPage: true })));
+  throw error;
 } finally { await browser.close(); await server.close(); }
