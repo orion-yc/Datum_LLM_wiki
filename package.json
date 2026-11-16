@@ -14,7 +14,7 @@
     "build:all": "pnpm build:backend && pnpm build",
     "start": "node scripts/backend.mjs start",
     "test": "node --test tests/*.test.mjs",
-    "test:e2e": "node scripts/e2e.mjs && node scripts/team-e2e.mjs && node scripts/wiki-e2e.mjs && node scripts/pdf-e2e.mjs"
+    "test:e2e": "node scripts/e2e.mjs && node scripts/team-e2e.mjs && node scripts/wiki-e2e.mjs && node scripts/pdf-e2e.mjs && node scripts/library-e2e.mjs"
   },
   "dependencies": {
     "lucide-react": "0.468.0",

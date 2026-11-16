@@ -372,19 +372,9 @@ bool learningRoutes(Context &c) {
     }
     if (p.size() == 3 && c.method("DELETE")) {
       Tx tx(db);
-      auto s = db.must("sources", id);
-      require(db.one("SELECT id FROM papers WHERE source_id=?", {id}).isEmpty(), 409,
-              "这份资料已关联论文，请先移除论文档案及其对比引用。");
-      require(db.one("SELECT e.page_id FROM wiki_evidence e JOIN chunks ch ON ch.id=e.chunk_id "
-                     "WHERE ch.source_id=? LIMIT 1",
-                     {id})
-                  .isEmpty(),
-              409, "这份资料仍被 Wiki 知识页引用，请先在知识页中移除原文引用。");
-      db.exec("DELETE FROM sources WHERE id=?", {id});
-      db.activity(c.user, "source", "删除了《" + str(s, "title") + "》");
+      deleteSourceRecord(db, id, c.user);
       tx.commit();
-      QFile::remove(dataDir + "/uploads/" + id);
-      QDir(dataDir + "/pdf-previews/" + id).removeRecursively();
+      deleteSourceFiles(id);
       c.json(Obj{{"ok", true}});
       return true;
     }

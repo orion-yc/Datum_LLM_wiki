@@ -75,7 +75,7 @@ int main(int argc, char **argv) {
             req.path != "/api/settings/password")
           ctx.needEditor();
         if (teamRoutes(ctx) || collaborationRoutes(ctx) || researchRoutes(ctx) || wikiRoutes(ctx) ||
-            pdfRoutes(ctx) || learningRoutes(ctx))
+            pdfRoutes(ctx) || sourceManagementRoutes(ctx) || learningRoutes(ctx))
           return;
         throw Error(404, "接口不存在。");
       } catch (const Error &e) {

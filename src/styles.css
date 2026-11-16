@@ -33,6 +33,20 @@
 @media(max-width:1050px){.team-summary,.team-form-grid{grid-template-columns:1fr}.task-columns,.task-list{grid-template-columns:1fr}.comparison-toolbar{display:block}.comparison-toolbar>.button-row{margin-bottom:12px}.paper-grid,.comparison-grid{grid-template-columns:1fr}}
 @media(max-width:650px){.team-section,.collaboration-panel,.comparison-overview,.comparison-conclusion{padding:18px}.research-tabs>input{flex-basis:100%;max-width:none}.research-tabs>.button{margin-left:0}.comparison-matrix th,.comparison-matrix td{padding:14px}.comparison-matrix th:first-child{min-width:95px}.research-workflow{gap:6px}.research-workflow span{font-size:10px;padding:7px}.members-table th,.members-table td{padding:12px 8px}.invitation-list>div{align-items:flex-start}.team-identity h2{font-size:19px}.comment .section-heading{gap:10px}.paper-card{padding:20px}}
 /* Optional PDF vision parsing and page-by-page review. */
+.library-actions { flex-wrap: wrap; }
+.library-batch-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 14px 20px; padding: 16px 20px; margin: 20px 0; font-size: 12px; }
+.library-batch-bar > .button-row { margin-left: auto; flex-wrap: wrap; }
+.library-batch-bar > small { flex-basis: 100%; }
+.library-selectable { position: relative; min-width: 0; }
+.library-selectable > .book-card { width: 100%; }
+.library-selectable.is-selected > .book-card { outline: 2px solid #9e85cf; outline-offset: 3px; border-radius: 12px; }
+.library-select-control { position: absolute; top: 10px; left: 10px; z-index: 1; display: flex; gap: 6px; align-items: center; padding: 7px 10px; border-radius: 8px; background: white; color: #675575; cursor: pointer; font-size: 11px; box-shadow: 0 2px 12px #40304815; }
+.library-select-control input { width: 16px; height: 16px; margin: 0; accent-color: #9e85cf; }
+.batch-delete-list { list-style: none; padding: 0; max-height: 45vh; overflow: auto; margin: 20px 0; }
+.batch-delete-list li { padding: 12px 4px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.batch-delete-list li > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.batch-delete-list .badge { flex-shrink: 0; }
+@media(max-width: 650px) { .library-batch-bar { padding: 15px; } .library-batch-bar > .button-row { margin-left: 0; width: 100%; } }
 .modal.pdf-parse-modal { width: 1120px; }
 .markdown-table { overflow: auto; max-width: 100%; margin: 12px 0; }
 .markdown-table table { width: 100%; border-collapse: collapse; font-size: inherit; }
