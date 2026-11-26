@@ -1,4 +1,6 @@
+#include "model_catalog.hpp"
 #include "core.hpp"
+#include "projects.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -11,7 +13,7 @@ QString dataDir;
 const QStringList categories = {"个人学习", "论文研究", "项目知识", "故障经验", "团队百科"};
 static const QStringList jsonFields = {"tags",          "prerequisites", "steps",
                                        "knowledge_ids", "citations",     "paper_ids",
-                                       "dimensions",    "cells",         "snapshot", "warnings"};
+                                       "dimensions",    "cells",         "snapshot", "warnings", "selection"};
 QString uid() {
   return QUuid::createUuid().toString(QUuid::WithoutBraces);
 }
@@ -300,7 +302,7 @@ void Database::activity(const Obj &u, const QString &kind, const QString &label)
 }
 void Database::initialize() {
   if (!one("SELECT name FROM sqlite_master WHERE type='table' AND name='config'").isEmpty() &&
-      config("schema_version") != "4") {
+      config("schema_version") != "10") {
     require(QDir().mkpath(dataDir + "/backups"), 500, "无法创建迁移备份目录。");
     auto backup = dataDir + "/backups/before-cpp-" +
                   QDateTime::currentDateTimeUtc().toString("yyyyMMdd-HHmmss-zzz") + "-" + uid();
@@ -322,6 +324,15 @@ void Database::initialize() {
   const QString sql = R"SQL(
 CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT NOT NULL COLLATE NOCASE UNIQUE,name TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('owner','admin','editor','viewer')),active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS single_owner ON users(role) WHERE role='owner';
+CREATE TABLE IF NOT EXISTS source_knowledge_links(
+ id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ knowledge_id TEXT NOT NULL REFERENCES knowledge(id) ON DELETE CASCADE,
+ chunk_id TEXT NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+ end_chunk_id TEXT NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+ start_offset INTEGER NOT NULL, end_offset INTEGER NOT NULL, quote TEXT NOT NULL,
+ created_at TEXT NOT NULL, UNIQUE(knowledge_id,chunk_id,end_chunk_id,start_offset,end_offset)
+);
+CREATE INDEX IF NOT EXISTS source_knowledge_links_source ON source_knowledge_links(source_id,created_at);
 CREATE TABLE IF NOT EXISTS invitations(id TEXT PRIMARY KEY,token_hash TEXT NOT NULL UNIQUE,role TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),expires TEXT NOT NULL,used_by TEXT REFERENCES users(id),revoked INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS resource_versions(kind TEXT NOT NULL,target_id TEXT NOT NULL,version INTEGER NOT NULL,PRIMARY KEY(kind,target_id));
 CREATE TABLE IF NOT EXISTS comments(id TEXT PRIMARY KEY,kind TEXT NOT NULL,target_id TEXT NOT NULL,author_id TEXT NOT NULL REFERENCES users(id),content TEXT NOT NULL,resolved INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
@@ -347,6 +358,8 @@ CREATE TABLE IF NOT EXISTS comparison_history(id TEXT PRIMARY KEY,comparison_id 
   }
   if (!hasColumn("activity", "actor_id"))
     exec("ALTER TABLE activity ADD COLUMN actor_id TEXT");
+  if (!hasColumn("notes", "selection"))
+    exec("ALTER TABLE notes ADD COLUMN selection TEXT");
   if (!hasColumn("activity", "actor_name"))
     exec("ALTER TABLE activity ADD COLUMN actor_name TEXT NOT NULL DEFAULT ''");
   if (one("SELECT id FROM users LIMIT 1").isEmpty() && !config("password").isEmpty()) {
@@ -360,7 +373,8 @@ CREATE TABLE IF NOT EXISTS comparison_history(id TEXT PRIMARY KEY,comparison_id 
   exec("DELETE FROM config WHERE key='password'");
   initializeWiki(*this);
   initializePdf(*this);
-  config("schema_version", "4");
+  initializeProjects(*this);
+  config("schema_version", "10");
   if (config("team_name").isEmpty())
     config("team_name", "我的学习空间");
   tx.commit();
@@ -542,41 +556,229 @@ Arr rankChunks(const QString &question, const Arr &chunks, int limit) {
     }
   return out;
 }
-Obj modelSettings(Database &db) {
-  auto base = db.config("model_base_url"), model = db.config("model_name");
-  auto effort = db.config("model_reasoning_effort");
-  return {{"baseUrl", base},
-          {"model", model},
-          {"reasoningEffort", effort.isEmpty() ? "default" : effort},
-          {"pdfModel", db.config("pdf_model")},
-          {"keyConfigured", !db.config("model_api_key").isEmpty()},
-          {"configured", !base.isEmpty() && !model.isEmpty()}};
+static QString modelApiRoot(QString url) {
+  for (const QString suffix : {QStringLiteral("/responses"), QStringLiteral("/chat/completions")}) {
+    if (url.endsWith(suffix)) {
+      url.chop(suffix.size());
+      break;
+    }
+  }
+  return url;
 }
+
+static Obj connectionSettings(Database &db) {
+  Obj config;
+  for (const auto &item : db.all("SELECT key,value FROM config WHERE key IN "
+        "('model_base_url','model_name','model_protocol','model_stream','pdf_model',"
+        "'model_reasoning_effort','model_api_key','model_actor_header')")) {
+    const auto row = item.toObject();
+    config[str(row,"key")] = row["value"];
+  }
+  const auto base = str(config,"model_base_url"), model = str(config,"model_name");
+  const auto protocol = config["model_protocol"].toString("auto");
+  const bool responses = protocol == "responses" || (protocol == "auto" && base.endsWith("/responses"));
+  const auto key = str(config,"model_api_key"), actor = str(config,"model_actor_header");
+  const auto effort = str(config,"model_reasoning_effort");
+  return {{"baseUrl",base},{"model",model},{"protocol",protocol},{"stream",str(config,"model_stream")=="1"},
+          {"endpoint",base.isEmpty() ? QString() : modelApiRoot(base) + (responses ? "/responses" : "/chat/completions")},
+          {"reasoningEffort",effort.isEmpty() ? "default" : effort},{"pdfModel",str(config,"pdf_model")},
+          {"keyConfigured",!key.isEmpty()},{"actorHeaderConfigured",!actor.isEmpty()},
+          {"configured",!base.isEmpty() && !model.isEmpty()},{"encryptedKey",key},{"encryptedActor",actor}};
+}
+
+Obj modelSettings(Database &db) {
+  auto settings = connectionSettings(db);
+  settings.remove("encryptedKey");
+  settings.remove("encryptedActor");
+  return settings;
+}
+
+static QNetworkRequest modelRequest(const Obj &settings, const QUrl &url) {
+  QNetworkRequest request(url);
+  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,QNetworkRequest::ManualRedirectPolicy);
+  auto key = decrypt(str(settings,"encryptedKey"));
+  auto actor = decrypt(str(settings,"encryptedActor"));
+  if (!key.isEmpty()) request.setRawHeader("Authorization",("Bearer " + key).toUtf8());
+  if (!actor.isEmpty()) request.setRawHeader("x-openai-actor-authorization",actor.toUtf8());
+  return request;
+}
+
+Arr availableModels(Database &db) {
+  const auto settings = connectionSettings(db);
+  const auto base = str(settings,"baseUrl");
+  require(!base.isEmpty(),400,"请先保存服务地址。");
+  QNetworkAccessManager network;
+  auto request = modelRequest(settings,QUrl(modelApiRoot(base) + "/models"));
+  auto reply = network.get(request);
+  QEventLoop loop;
+  QTimer timer;
+  timer.setSingleShot(true);
+  QObject::connect(&timer,&QTimer::timeout,reply,&QNetworkReply::abort);
+  QObject::connect(reply,&QNetworkReply::finished,&loop,&QEventLoop::quit);
+  constexpr int limit = 2 * 1024 * 1024;
+  reply->setReadBufferSize(limit + 1);
+  QObject::connect(reply,&QIODevice::readyRead,reply,[&] {
+    if (reply->bytesAvailable() > limit) reply->abort();
+  });
+  timer.start(15000);
+  if (!reply->isFinished()) loop.exec();
+  const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+  require(timer.isActive(),502,"读取模型列表超时，可以手动填写模型 ID。");
+  require(status >= 200 && status < 300 && reply->error()==QNetworkReply::NoError,502,
+          status ? QString("模型列表请求未成功（HTTP %1），可以手动填写模型 ID。").arg(status)
+                 : QStringLiteral("连接模型列表失败，可以手动填写模型 ID。"));
+  const auto data = QJsonDocument::fromJson(reply->readAll()).object().value("data");
+  require(data.isArray(),502,"模型列表格式无效，可以手动填写模型 ID。");
+  QStringList ids;
+  for (const auto &item : data.toArray()) {
+    const auto id = str(item.toObject(),"id").trimmed();
+    if (!id.isEmpty() && id.size() <= 200) ids.append(id);
+  }
+  ids.removeDuplicates();
+  ids.sort();
+  return Arr::fromStringList(ids);
+}
+
+static Arr responseInput(const Arr &messages) {
+  Arr input;
+  for (const auto &value : messages) {
+    const auto message = value.toObject();
+    const auto role = str(message, "role");
+    const auto content = message["content"];
+    if (content.isString()) {
+      input.append(message);
+      continue;
+    }
+    Arr parts;
+    for (const auto &item : content.toArray()) {
+      const auto part = item.toObject();
+      const auto type = str(part, "type");
+      if (type == "image_url") {
+        const auto image = part["image_url"].toObject();
+        parts.append(Obj{{"type", "input_image"}, {"image_url", image["url"]}, {"detail", image["detail"]}});
+      } else if (type == "text") {
+        parts.append(Obj{{"type", role == "assistant" ? "output_text" : "input_text"}, {"text", part["text"]}});
+      }
+    }
+    input.append(Obj{{"role", role}, {"content", parts}});
+  }
+  return input;
+}
+
+static QString responseText(const Obj &response, bool document) {
+  const auto status = str(response, "status");
+  const auto incomplete = response["incomplete_details"].toObject();
+  require(!document || status != "incomplete" || str(incomplete, "reason") != "max_output_tokens", 502,
+          "本页解析结果超出模型输出上限，请调整模型或降低推理强度后重试。");
+  require(status.isEmpty() || status == "completed", 502, "模型未完成 Responses 请求。");
+  QString text;
+  for (const auto &item : response["output"].toArray()) {
+    const auto message = item.toObject();
+    if (str(message, "type") != "message" || str(message, "role") != "assistant")
+      continue;
+    for (const auto &part : message["content"].toArray())
+      if (str(part.toObject(), "type") == "output_text")
+        text += str(part.toObject(), "text");
+  }
+  return text;
+}
+
+// Some relays omit the output array in the final event and send text only as deltas.
+class ResponsesEvents {
+  QByteArray pending, data, eventName;
+  QString deltas, answer;
+  bool document;
+  bool terminal = false;
+  void dispatch() {
+    if (data == "[DONE]") {
+      if (!terminal) throw TemporaryModelError("模型流在确认完成前中断。");
+      return;
+    }
+    if (data.isEmpty()) return;
+    const auto parsed = QJsonDocument::fromJson(data);
+    require(parsed.isObject(), 502, "模型流事件格式无效。");
+    const auto event = parsed.object();
+    const auto type = event["type"].toString(QString::fromUtf8(eventName));
+    if (type == "response.output_text.delta") {
+      deltas += event["delta"].toString();
+      require(deltas.size() <= 100000, 502, "模型响应过大。");
+    } else if (type == "response.completed") {
+      const auto response = event["response"].toObject();
+      auto finalText = responseText(response, document);
+      answer = finalText.isEmpty() ? deltas : finalText;
+      terminal = true;
+    } else if (type == "response.incomplete") {
+      responseText(event["response"].toObject(), document);
+      throw Error(502, "模型未完成 Responses 请求。");
+    } else if (type == "error" || type == "response.failed") {
+      throw Error(502, "模型服务在流式生成过程中返回错误。");
+    }
+  }
+public:
+  explicit ResponsesEvents(bool document) : document(document) {}
+  void feed(const QByteArray &bytes) {
+    pending += bytes;
+    qsizetype start = 0, end;
+    while (!terminal && (end = pending.indexOf('\n', start)) >= 0) {
+      auto line = pending.mid(start, end - start);
+      start = end + 1;
+      if (line.endsWith('\r')) line.chop(1);
+      if (line.isEmpty()) {
+        dispatch();
+        data.clear();
+        eventName.clear();
+      } else if (line.startsWith("data:")) {
+        if (!data.isEmpty()) data += '\n';
+        data += line.mid(line.startsWith("data: ") ? 6 : 5);
+      } else if (line.startsWith("event:")) {
+        eventName = line.mid(6).trimmed();
+      }
+    }
+    pending.remove(0, start);
+  }
+  bool done() const { return terminal; }
+  QString result() const {
+    if (!terminal) throw TemporaryModelError("模型流在确认完成前中断。");
+    return answer.trimmed();
+  }
+};
+
 QString complete(Database &db, const Arr &messages, bool test, const CompletionOptions &options) {
-  auto settings = modelSettings(db);
+  auto settings = connectionSettings(db);
   require(settings["configured"].toBool(), 400, "请先在设置中配置模型地址与模型名称。");
   QNetworkAccessManager network;
-  QNetworkRequest request(QUrl(str(settings, "baseUrl") + "/chat/completions"));
+  const auto endpoint = str(settings, "endpoint");
+  const bool responses = QUrl(endpoint).path().endsWith("/responses");
+  const bool stream = responses && settings["stream"].toBool();
+  auto request = modelRequest(settings, QUrl(endpoint));
   request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                       QNetworkRequest::ManualRedirectPolicy);
-  auto key = decrypt(db.config("model_api_key"));
-  if (!key.isEmpty())
-    request.setRawHeader("Authorization", ("Bearer " + key).toUtf8());
-  auto effort = str(settings, "reasoningEffort");
+  const auto effort = options.reasoningOverride.isEmpty() ? str(settings, "reasoningEffort") : options.reasoningOverride;
   bool explicitEffort = effort != "default";
-  Obj body{{"model", options.model.isEmpty() ? str(settings, "model") : options.model},
-           {"messages", messages}};
-  if (explicitEffort || options.document) {
+  Obj body{{"model", options.model.isEmpty() ? str(settings, "model") : options.model}};
+  if (responses) {
+    if (stream) {
+      body["stream"] = true;
+      request.setRawHeader("Accept", "text/event-stream");
+    }
+    body["input"] = responseInput(messages);
+    body["store"] = false;
+    body["max_output_tokens"] = test ? (explicitEffort ? 4096 : 64) :
+                                  (explicitEffort ? 32768 : (options.document ? 8192 : 4000));
+    if (explicitEffort)
+      body["reasoning"] = Obj{{"effort", effort}};
+  } else if (explicitEffort || options.document) {
+    body["messages"] = messages;
     if (explicitEffort)
       body["reasoning_effort"] = effort;
     // Reasoning shares the completion budget; temperature is rejected by some models.
     body["max_completion_tokens"] = test ? 4096 : (explicitEffort ? 32768 : 8192);
   } else {
+    body["messages"] = messages;
     body["temperature"] = 0.25;
     body["max_tokens"] = test ? 16 : 4000;
   }
   QJsonDocument doc;
+  QString content;
   for (int attempt = 0; attempt < 2; ++attempt) {
     require(!options.canceled || !options.canceled(), 409, "解析已取消。");
     auto reply = network.post(request, pack(body).toUtf8());
@@ -600,12 +802,57 @@ QString complete(Database &db, const Arr &messages, bool test, const CompletionO
     }
     timer.start(explicitEffort || options.document ? (test ? 60000 : 180000)
                                                  : (test ? 20000 : 60000));
-    loop.exec();
+    QByteArray payload;
+    ResponsesEvents events(options.document);
+    bool eventStream = false;
+    std::exception_ptr parseFailure;
+    qsizetype received = 0;
+    constexpr qsizetype byteLimit = 4 * 1024 * 1024;
+    reply->setReadBufferSize(64 * 1024);
+    auto consume = [&] {
+      if (!reply->isOpen() || events.done() || parseFailure) return;
+      try {
+        while (reply->bytesAvailable() > 0) {
+          auto bytes = reply->read(64 * 1024);
+          if (bytes.isEmpty()) break;
+          received += bytes.size();
+          require(received <= byteLimit, 502, "模型响应过大。");
+          const auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+          eventStream = stream && status >= 200 && status < 300 &&
+                        reply->rawHeader("Content-Type").toLower().startsWith("text/event-stream");
+          if (eventStream) {
+            events.feed(bytes);
+            if (events.done()) {
+              loop.quit();
+              break;
+            }
+          } else {
+            payload += bytes;
+          }
+        }
+      } catch (...) {
+        parseFailure = std::current_exception();
+        loop.quit();
+      }
+    };
+    QObject::connect(reply, &QIODevice::readyRead, &loop, consume);
+    consume();
+    if (!reply->isFinished() && !events.done() && !parseFailure)
+      loop.exec();
+    consume();
     auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    auto payload = reply->readAll();
+    const bool timedOut = !timer.isActive();
     auto error = reply->error();
     reply->deleteLater();
-    require(payload.size() <= 4 * 1024 * 1024, 502, "模型响应过大。");
+    require(!options.canceled || !options.canceled(), 409, "解析已取消。");
+    if (timedOut || error == QNetworkReply::TimeoutError)
+      throw TemporaryModelError("等待模型响应超时。");
+    if (status == 408 || status == 500 || status == 502 || status == 503 || status == 504 ||
+        (status >= 520 && status <= 524))
+      throw TemporaryModelError(QString("模型服务暂时不可用（HTTP %1）。").arg(status));
+    if (error == QNetworkReply::RemoteHostClosedError || error == QNetworkReply::TemporaryNetworkFailureError)
+      throw TemporaryModelError("模型连接中断。");
+    if (parseFailure) std::rethrow_exception(parseFailure);
     doc = QJsonDocument::fromJson(payload);
     if (status == 400 || status == 422) {
       auto upstream = doc.object()["error"].toObject();
@@ -613,13 +860,13 @@ QString complete(Database &db, const Arr &messages, bool test, const CompletionO
       auto mentions = [&](const QString &parameter) {
         return upstream["param"].toString() == parameter || message.contains(parameter);
       };
-      require(!explicitEffort || !mentions("reasoning_effort"), 502,
+      require(!explicitEffort || !mentions(responses ? "reasoning" : "reasoning_effort"), 502,
               "模型服务不接受所选推理强度，请选择该模型支持的强度，或改为“服务商默认”。");
       static const QRegularExpression unsupported(
           "unknown|unrecognized|unexpected|unsupported|not supported|not permitted|not allowed|不支持|未识别");
       auto code = upstream["code"].toString().toLower();
       // Retry only an explicitly unsupported token parameter, preserving the chosen effort.
-      if ((explicitEffort || options.document) && attempt == 0 && mentions("max_completion_tokens") &&
+      if (!responses && (explicitEffort || options.document) && attempt == 0 && mentions("max_completion_tokens") &&
           (unsupported.match(message).hasMatch() || code == "unsupported_parameter" ||
            code == "unknown_parameter")) {
         body["max_tokens"] = body.take("max_completion_tokens");
@@ -630,13 +877,18 @@ QString complete(Database &db, const Arr &messages, bool test, const CompletionO
             status ? QString("模型服务返回 HTTP %1，请检查模型名称、密钥和服务额度。").arg(status)
                    : "无法连接模型服务或响应超时。");
     require(error == QNetworkReply::NoError, 502, "模型响应无效。");
+    if (eventStream) content = events.result();
     break;
   }
-  auto choices = doc.object()["choices"].toArray();
-  require(!choices.isEmpty(), 502, "模型服务未返回文本回答。");
-  require(!options.document || str(choices[0].toObject(), "finish_reason") != "length", 502,
-          "本页解析结果超出模型输出上限，请调整模型或降低推理强度后重试。");
-  auto content = choices[0].toObject()["message"].toObject()["content"].toString().trimmed();
+  if (responses && content.isEmpty()) {
+    content = responseText(doc.object(), options.document).trimmed();
+  } else if (!responses) {
+    auto choices = doc.object()["choices"].toArray();
+    require(!choices.isEmpty(), 502, "模型服务未返回文本回答。");
+    require(!options.document || str(choices[0].toObject(), "finish_reason") != "length", 502,
+            "本页解析结果超出模型输出上限，请调整模型或降低推理强度后重试。");
+    content = choices[0].toObject()["message"].toObject()["content"].toString().trimmed();
+  }
   require(!content.isEmpty() && content.size() <= 100000, 502, "模型服务未返回有效文本。");
   return content;
 }

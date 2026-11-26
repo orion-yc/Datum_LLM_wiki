@@ -110,6 +110,7 @@ bool authRoutes(Context &);
 bool teamRoutes(Context &);
 bool collaborationRoutes(Context &);
 bool learningRoutes(Context &);
+bool uploadRoutes(Context &);
 bool sourceManagementRoutes(Context &);
 Obj sourceDeletionInfo(Database &, const QString &);
 void deleteSourceRecord(Database &, const QString &, const Obj &user);
@@ -134,10 +135,14 @@ QStringList splitText(const QString &, int size = 1100, int overlap = 150);
 Arr markdownChunks(const QString &);
 Arr rankChunks(const QString &, const Arr &, int limit = 6);
 Obj modelSettings(Database &);
+struct TemporaryModelError : Error {
+  explicit TemporaryModelError(const QString &message) : Error(502, message) {}
+};
 struct CompletionOptions {
   QString model;
   bool document = false;
   std::function<bool()> canceled;
+  QString reasoningOverride;
 };
 QString complete(Database &, const Arr &, bool test = false, const CompletionOptions & = {});
 void selfTest();

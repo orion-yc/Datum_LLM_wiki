@@ -1,0 +1,12 @@
+datum-wiki.onnotify.top {
+	encode zstd gzip
+	request_body {
+		max_size 160MB
+	}
+	reverse_proxy 127.0.0.1:3001 {
+		transport http {
+			read_timeout 600s
+			write_timeout 90s
+		}
+	}
+}

@@ -1,0 +1,11 @@
+.pdf-figures { margin: .65rem 0; min-height: 1rem; }
+.pdf-figures figure { margin: .8rem 0; }
+.pdf-figures figure img { display: block; width: auto; max-width: 100%; height: auto; max-height: 75vh; object-fit: contain; margin-inline: auto; }
+.pdf-figures figcaption, .pdf-image-pages label { font-size: .78rem; color: var(--muted, #67697d); }
+.pdf-image-pages { margin-block: 1.2rem; }
+.pdf-image-pages label { display: inline-flex; gap: .5rem; align-items: center; }
+.pdf-image-pages input { width: 5.5rem; }
+
+.pdf-image-navigation, .pdf-image-navigation form { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.pdf-image-pages .chunk-caption { flex-wrap: wrap; }
+.pdf-original-link { font-size: .8rem; text-decoration: underline; text-underline-offset: .18em; }

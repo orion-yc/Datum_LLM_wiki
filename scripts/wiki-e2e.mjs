@@ -26,10 +26,129 @@ try {
   await visible(dialog('整理 Wiki 知识页草稿')); assert.equal((await server.request('/api/wiki')).data.length, 0);
   assert.equal(await page.getByLabel('知识页标题', { exact: true }).evaluate(input => input === document.activeElement), true, '编辑器出现时立即完成焦点定位');
   await visible(page.getByText('查找教材：使用 2/2 个片段', { exact: true })); await page.getByLabel('知识页摘要', { exact: true }).fill('把算法前提、区间不变量与实验边界整理在一起。'); await page.getByLabel('知识页标签', { exact: true }).fill('算法，边界，实验');
-  await page.getByLabel('知识页正文', { exact: true }).fill('## 适用条件\n有序序列是二分查找的前提。[1]\n\n## 如何验证\n测试空数组、首尾元素和目标不存在，并核对循环不变量。[3]\n\n```cpp\nwhile (left <= right) { /* 检查区间 */ }\n```');
-  await page.getByRole('button', { name: '预览正文', exact: true }).click(); await visible(page.getByRole('button', { name: '继续编辑', exact: true })); await visible(dialog('整理 Wiki 知识页草稿').locator('pre code')); await page.getByRole('button', { name: '继续编辑', exact: true }).click();
+  const dilation = String.raw`A\oplus B=\{z\mid(\hat B)_z\cap A\neq\varnothing\}`;
+  const body = [
+    '重复选段。', '## 适用条件', '重复选段。', '有序序列是二分查找的前提。[1]', '## 如何验证',
+    '测试空数组、首尾元素和目标不存在，并核对循环不变量。[3]',
+    `集合运算 $${dilation}$。`, '$$', String.raw`\frac{a}{b}`, '$$',
+    String.raw`括号公式 \(x_i\)，独立公式 \[x^2\]。`,
+    '代码 `$code$`。', '```cpp', 'while (left <= right) { /* $raw$ */ }', '```',
+    String.raw`错误输入 $\notARealMacro{x}$。之后仍可阅读。`,
+  ].join('\n');
+  async function verifyMath(scope) {
+    const latex = scope.locator('.katex annotation[encoding="application/x-tex"]');
+    await visible(scope.locator('.katex .katex-html').first());
+    assert.deepEqual((await latex.allTextContents()).map(t => t.trim()), [dilation, String.raw`\frac{a}{b}`, 'x_i', 'x^2']);
+    assert.equal(await scope.locator('.katex-display').count(), 2);
+    await page.evaluate(() => document.fonts.ready);
+    assert.ok(await page.evaluate(() => [...document.fonts].some(face => face.family.includes('KaTeX') && face.status === 'loaded')), '公式使用站点提供的数学字体');
+    assert.equal(await scope.locator('code .katex').count(), 0);
+    await visible(scope.locator('code').filter({ hasText: '$raw$' }));
+    await visible(scope.getByText(/错误输入.*notARealMacro.*之后仍可阅读/).last());
+  }
+  await page.getByLabel('知识页正文', { exact: true }).fill(body);
+  await page.getByRole('button', { name: '预览正文', exact: true }).click();
+  await verifyMath(page.locator('.wiki-preview'));
+  await page.getByRole('button', { name: '继续编辑', exact: true }).click();
+  assert.equal(await page.getByLabel('知识页正文', { exact: true }).inputValue(), body);
+  const gen = '生成改写建议';
+  const clickButton = (scope, name) => scope.getByRole('button', {name, exact:true}).click();
+  const rewrites = [];
+  await page.route('**/api/wiki/rewrite', route => {
+    const payload = route.request().postDataJSON(); rewrites.push(payload);
+    return route.fulfill({json:{body:payload.scope === 'page' ? '## 新结构\n改写后的解释。[1]' : '新的说法',
+      summary:payload.previous ? '调整后的摘要' : '建议摘要'}});
+  });
+  await clickButton(page, '整页重新总结');
+  const fullRewrite = dialog('整页重新总结');
+  await fullRewrite.getByLabel('修改意见').fill('按学习顺序组织');
+  await clickButton(fullRewrite, gen);
+  await visible(fullRewrite.getByRole('button',{name:'采用整页改写'}));
+  await fullRewrite.getByLabel('修改意见').fill('摘要再短一些');
+  await clickButton(fullRewrite, '继续调整');
+  await visible(fullRewrite.getByText('调整后的摘要', {exact:true}));
+  assert.equal(rewrites.at(-1).previous.summary, '建议摘要');
+  assert.equal((await server.request('/api/wiki')).data.length, 0);
+  await clickButton(fullRewrite, '采用整页改写');
+  assert.equal(await page.getByLabel('知识页摘要', {exact:true}).inputValue(), '调整后的摘要');
+  await clickButton(page, '撤销上次改写');
+  assert.equal(await page.getByLabel('知识页正文', {exact:true}).inputValue(), body);
   await page.getByRole('button', { name: '保存知识页草稿', exact: true }).click(); await visible(page.getByRole('heading', { name: '查找边界实践 boundarybridgealias', exact: true }));
   const id = (await page.evaluate(() => location.hash)).split('/')[2];
+  await page.reload();
+  await verifyMath(page.locator('.wiki-article'));
+  assert.equal((await server.request(`/api/wiki/${id}`)).data.body, body);
+  async function selectText(locator, text) {
+    await locator.scrollIntoViewIfNeeded();
+    await locator.evaluate((element, value) => {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        const start = node.data.indexOf(value);
+        if (start < 0) continue;
+        const range = document.createRange();
+        range.setStart(node, start);
+        range.setEnd(node, start + value.length);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return;
+      }
+      throw new Error('找不到要选取的文字');
+    }, text);
+  }
+  const duplicate = '重复选段';
+  await selectText(page.locator('.wiki-article .text-line').filter({hasText:duplicate}).last(), duplicate);
+  await clickButton(page, '重新总结');
+  const partial = dialog('重新总结选段');
+  await clickButton(partial, gen);
+  await clickButton(partial, '采用这次改写');
+  await visible(page.getByRole('button',{name:'撤销上次改写'}));
+  const pos = body.lastIndexOf(duplicate);
+  assert.equal(rewrites.at(-1).start, pos);
+  assert.equal((await server.request('/api/wiki/'+id)).data.body, body.slice(0,pos)+'新的说法'+body.slice(pos+duplicate.length));
+  await clickButton(page, '撤销上次改写');
+  await clickButton(page.locator('.wiki-article .wiki-rewrite-heading').first(), '重写本节');
+  await clickButton(dialog('重写本节'), gen);
+  await visible(dialog('重写本节').getByRole('button',{name:'采用这次改写'}));
+  assert.equal(body.slice(rewrites.at(-1).start,rewrites.at(-1).end), body.slice(body.indexOf('## 适用条件'), body.indexOf('## 如何验证')).trimEnd());
+  await clickButton(dialog('重写本节'), '关闭');
+  assert.equal((await server.request('/api/wiki/'+id)).data.body, body);
+  await page.unroute('**/api/wiki/rewrite');
+  console.log('✓ 整页改写与追加反馈、未保存草稿撤销、重复选段精确替换和小节范围');
+  const quote = '有序序列是二分查找的前提';
+  const question = '为什么无序数组不能直接二分？';
+  const requests = [];
+  const askRoute = `**/api/wiki/${id}/ask-selection`;
+  await page.route(askRoute, route => {
+    requests.push(route.request().postDataJSON());
+    return requests.length === 1
+      ? route.fulfill({status: 503, json: {error: '模型暂时不可用'}})
+      : route.fulfill({json: {answer: '## 为什么需要有序\n\n每次比较都能排除 **一半区间**。'}});
+  });
+  const askButton = page.getByRole('button', {name: '问 AI', exact: true});
+  const line = page.locator('.wiki-article .text-line').filter({hasText: quote}).first();
+  await selectText(line, quote);
+  await visible(askButton);
+  await selectText(page.locator('.wiki-side h3').first(), '关联知识页');
+  await askButton.waitFor({state: 'hidden'});
+  await selectText(line, quote);
+  await askButton.click();
+  const askDialog = dialog('选中提问');
+  await visible(askDialog.getByText(quote, {exact: true}));
+  const questionInput = askDialog.getByLabel('你的问题', {exact: true});
+  await questionInput.fill(question);
+  const submit = askDialog.getByRole('button', {name: '发送问题', exact: true});
+  await submit.click();
+  await visible(askDialog.getByText('模型暂时不可用', {exact: true}));
+  assert.equal(await questionInput.inputValue(), question);
+  await submit.click();
+  await visible(askDialog.getByRole('heading', {name: '为什么需要有序', exact: true}));
+  assert.equal(await askDialog.locator('strong').filter({hasText: '一半区间'}).count(), 1);
+  assert.deepEqual(requests.map(({quote, question}) => ({quote, question})), [{quote, question}, {quote, question}]);
+  await askDialog.getByRole('button', {name: '关闭窗口'}).click();
+  await page.unroute(askRoute);
+  console.log('✓ Wiki 正文选区限定、带原文提问、失败重试及 Markdown 回答');
   await page.getByRole('button', { name: '[1]', exact: true }).first().click(); await visible(page.locator('#wiki-evidence-1[open]'));
   await page.getByRole('button', { name: '核对并发布', exact: true }).click(); await page.getByRole('button', { name: '确认发布知识页', exact: true }).click(); await visible(page.getByText('已发布', { exact: true }));
   assert.equal((await server.request(`/api/wiki/${id}`)).data.status, 'published'); await page.screenshot({ path: join(out, 'wiki-published.png'), fullPage: true });
@@ -38,7 +157,7 @@ try {
   await page.getByRole('button', { name: '添加原文证据', exact: true }).click(); const sources = (await server.request('/api/sources')).data; await page.getByLabel('证据来源资料', { exact: true }).selectOption(sources.find(s => s.title === '查找教材').id); await page.getByLabel('筛选原文片段', { exact: true }).fill('边界');
   await page.locator('.evidence-picker input[type="checkbox"]').first().check(); await page.getByRole('button', { name: '添加选中证据（1/32）', exact: true }).click();
   await page.getByLabel('关联知识页', { exact: true }).selectOption(id); await page.getByRole('button', { name: '保存知识页草稿', exact: true }).click(); await visible(page.getByRole('heading', { name: '区间不变量备忘', exact: true }));
-  await page.locator('.wiki-side').getByRole('button', { name: '查找边界实践 boundarybridgealias', exact: true }).click(); await visible(page.locator('.wiki-side').getByRole('button', { name: '区间不变量备忘', exact: true }));
+  await page.locator('.wiki-side').getByRole('button', { name: /查找边界实践 boundarybridgealias/ }).click(); await visible(page.locator('.wiki-side').getByRole('button', { name: /区间不变量备忘/ }));
   await page.getByRole('button', { name: '历史版本', exact: true }).click(); await visible(dialog('知识页版本记录')); await page.getByRole('button', { name: '关闭窗口', exact: true }).click();
   await nav('知识 Wiki'); await page.getByRole('button', { name: /质量检查/ }).click(); await visible(page.getByRole('heading', { name: '知识库质量检查', exact: true })); await visible(page.getByText('草稿待整理与核对，尚未用于辅助问答检索。', { exact: true })); await page.screenshot({ path: join(out, 'wiki-audit.png'), fullPage: true });
   console.log('✓ 网页手动建页、证据选择、关联与反向链接、历史查看和质量检查');
@@ -49,6 +168,53 @@ try {
   await page.getByRole('button', { name: '历史版本', exact: true }).click(); await page.getByRole('button', { name: '恢复为新草稿', exact: true }).last().click(); await page.getByRole('button', { name: '恢复知识页版本', exact: true }).click(); await visible(page.getByText('把算法前提、区间不变量与实验边界整理在一起。', { exact: true }));
   await page.getByRole('button', { name: '搜索你的知识…', exact: false }).click(); await page.getByLabel('全局搜索', { exact: true }).fill('boundarybridgealias'); await visible(page.getByRole('heading', { name: 'Wiki 知识页', exact: true })); await page.getByRole('button', { name: '关闭窗口', exact: true }).click();
   console.log('✓ 网页 Wiki 检索线索、管理员重开、版本恢复和全局搜索');
+  const removable = [];
+  for (const title of ['筛选测试甲', '筛选测试乙']) {
+    const saved = await server.request('/api/wiki', { method: 'POST', body: { title, kind: 'concept', body: '待整理', citations: [], related_ids: [] } });
+    assert.equal(saved.status, 201); removable.push(saved.data.id);
+  }
+  await page.goto(server.base + '/#/wiki');
+  await page.reload();
+  assert.equal(await page.getByRole('heading', { name: '筛选测试甲', exact: true }).count(), 0);
+  await page.getByRole('button', { name: '新建体系', exact: true }).click();
+  await page.getByLabel('体系名称', { exact: true }).fill('测试索引');
+  await page.getByRole('button', { name: '保存体系', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  const system = (await server.request('/api/wiki/systems')).data.find(s => s.title === '测试索引');
+  assert.ok(system?.id);
+  await page.goto(server.base + '/#/wiki');
+  await page.getByRole('button', { name: '全部知识页', exact: true }).click();
+  await visible(page.getByRole('heading', { name: '筛选测试甲', exact: true }));
+  await page.getByLabel('筛选 Wiki 知识页', { exact: true }).fill('筛选测试');
+  await page.getByRole('button', { name: '批量管理', exact: true }).click();
+  await page.getByLabel('全选筛选结果', { exact: true }).check();
+  for (const title of ['筛选测试甲', '筛选测试乙']) assert.ok(await page.getByLabel('选择「' + title + '」').isChecked());
+  await page.getByRole('button', { name: '移入体系', exact: true }).click();
+  await page.getByLabel('目标体系', { exact: true }).selectOption(system.id);
+  await page.getByRole('button', { name: '确认移动', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await page.goto(server.base + '/#/wiki');
+  await page.getByRole('button', { name: '打开体系「测试索引」', exact: true }).click();
+  await visible(page.getByRole('heading', { name: '筛选测试乙', exact: true }));
+  assert.equal(await page.getByRole('heading', { name: '区间不变量备忘', exact: true }).count(), 0);
+  for (const target of removable) assert.equal((await server.request('/api/wiki/' + target)).data.system_id, system.id);
+  await page.getByRole('button', { name: '批量管理', exact: true }).click();
+  await page.getByLabel('全选筛选结果', { exact: true }).check();
+  const removeSelected = page.getByRole('button', { name: '删除所选知识页', exact: true });
+  await removeSelected.click();
+  const confirmBatch = page.getByRole('dialog', { name: '删除这 2 篇知识页？' });
+  await confirmBatch.getByRole('button', { name: '取消', exact: true }).click();
+  for (const target of removable) assert.equal((await server.request('/api/wiki/' + target)).status, 200);
+  await removeSelected.click();
+  await confirmBatch.getByRole('button', { name: '确认删除 2 篇', exact: true }).click();
+  await confirmBatch.waitFor({ state: 'hidden' });
+  await page.reload();
+  for (const target of removable) assert.equal((await server.request('/api/wiki/' + target)).status, 404);
+  assert.equal((await server.request('/api/wiki/' + id)).status, 200);
+  await page.goto(server.base + '/#/wiki');
+  await page.getByRole('button', { name: '全部知识页', exact: true }).click();
+  await visible(page.getByRole('heading', { name: '查找边界实践 boundarybridgealias', exact: true }));
+  console.log('✓ 筛选后的两篇 Wiki 全选、取消、确认批量删除，刷新后其余页面可读');
   const invite = (await server.request('/api/team/invitations', { method: 'POST', body: { role: 'viewer' } })).data;
   const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'zh-CN' }), mobile = await mobileContext.newPage(); mobile.on('pageerror', e => errors.push(e.message));
   await mobile.goto(`${server.base}/#/join?token=${invite.token}`); await mobile.getByLabel('成员账号', { exact: true }).fill('wikiviewer'); await mobile.getByLabel('显示姓名', { exact: true }).fill('Wiki 只读者'); await mobile.getByLabel('设置访问密码', { exact: true }).fill('viewer-browser-password'); await mobile.getByLabel('确认访问密码', { exact: true }).fill('viewer-browser-password'); await mobile.getByRole('button', { name: '创建账号并加入团队', exact: true }).click(); await visible(mobile.getByRole('heading', { name: '成员与权限', exact: true }));

@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -37,4 +37,19 @@ export async function academicPdf({ pages = 2, scanned = false } = {}) {
     }
     return Buffer.from(await scan.save());
   } finally { await rm(folder, { recursive: true, force: true }); }
+}
+
+export async function illustratedPdf() {
+  const pdf = await PDFDocument.create();
+  // A 32×32 opaque red PNG. Stretching it exercises PDF image transforms.
+  const red = await pdf.embedPng(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGP4KKBKU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULAF4imD3YWLi4AAAAAElFTkSuQmCC', 'base64'));
+  const raster = pdf.addPage([400, 600]);
+  raster.drawText('Embedded illustration in the text.', { x: 36, y: 520, size: 14 });
+  raster.drawImage(red, { x: 100, y: 220, width: 180, height: 95 });
+  const vector = pdf.addPage([400, 600]);
+  vector.drawText('A diagram made of vector paths.', { x: 36, y: 520, size: 14 });
+  vector.drawCircle({ x: 200, y: 300, size: 65, color: rgb(0, 0.2, 0.95) });
+  pdf.addPage([400, 600]).drawImage(red, { x: 0, y: 0, width: 400, height: 600 });
+  pdf.addPage([400, 600]).drawText('A page containing plain text only.', { x: 36, y: 520, size: 14 });
+  return pdf.save();
 }

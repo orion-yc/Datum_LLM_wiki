@@ -18,17 +18,29 @@ async function setup(t) {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); calls.push(body); active++; peak = Math.max(peak, active);
     res.on('close', () => active--);
-    const prompt = body.messages[0].content[0].text;
+    const responses = req.url === '/v1/responses';
+    const prompt = (responses ? body.input : body.messages)[0].content[0].text;
     const page = Number(prompt.match(/PDF page (\d+)/)[1]);
     if (mode === 'blocked') await gate.promise;
     if (mode === 'slow') await delay(80);
     res.setHeader('Content-Type', 'application/json');
-    if (mode === 'failure') { res.writeHead(503); res.end('{}'); return; }
+    if (mode === 'failure' || (mode === 'timeout-on-high' && page === 2 && body.reasoning?.effort === 'high')) {
+      res.writeHead(mode === 'failure' ? 503 : 504);
+      res.end('{}');
+      return;
+    }
     const content = mode === 'invalid' ? 'not-json' : JSON.stringify({
       markdown: `# Page ${page}\nAIORDER${page} Left column paragraph.\n\n${page === 2 ? 'Middle column paragraph.\n\n' : ''}Right column paragraph.\n\n| Metric | Value |\n| --- | --- |\n| Delay | 12.5 ms |\n\n$E=mc^2$`,
       blank: false, warnings: ['Check formula symbols against the original.'],
     });
-    res.end(JSON.stringify({ choices: [{ message: { content }, finish_reason: mode === 'truncated' ? 'length' : 'stop' }] }));
+    if (responses) {
+      res.end(JSON.stringify({ status: 'completed', output: [
+        { type: 'reasoning', summary: [] },
+        { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: content }] },
+      ] }));
+    } else {
+      res.end(JSON.stringify({ choices: [{ message: { content }, finish_reason: mode === 'truncated' ? 'length' : 'stop' }] }));
+    }
   });
   await new Promise(r => mock.listen(0, '127.0.0.1', r));
   t.after(() => { gate.resolve(); mock.closeAllConnections(); return new Promise(r => mock.close(r)); });
@@ -48,6 +60,52 @@ async function setup(t) {
   const action = (id, jobId, action, body) => request(`/api/sources/${id}/ai-parse/${jobId}/${action}`, { method: 'POST', body });
   return { server, request, calls, connection, configure, upload, job, waitJob, start, action, gate, mode: value => { mode = value; }, peak: () => peak };
 }
+
+test('PDF 版面识别可使用完整 Responses 地址并读取结构化结果', { timeout: 30000 }, async t => {
+  const f = await setup(t);
+  const settings = await f.request('/api/settings', { method: 'PUT', body: {
+    ...f.connection, baseUrl: f.connection.baseUrl + '/responses', reasoningEffort: 'high',
+  } });
+  assert.equal(settings.status, 200);
+  const upload = await f.upload('responses.pdf', await academicPdf());
+  assert.equal(upload.status, 202);
+  const id = upload.data[0].id;
+  assert.equal((await f.start(id, 1, 1)).status, 202);
+  const job = await f.waitJob(id);
+  assert.equal(job.status, 'ready', job.error);
+  assert.equal(job.completed_pages, 1);
+  assert.match(job.pages[0].content, /AIORDER1/);
+  const [payload] = f.calls;
+  assert.equal(payload.model, 'vision-pdf-model');
+  assert.equal(payload.reasoning.effort, 'high');
+  assert.equal(payload.max_output_tokens, 32768);
+  assert.equal(payload.store, false);
+  assert.equal(payload.messages, undefined);
+  assert.equal(payload.input[0].content[0].type, 'input_text');
+  const image = payload.input[0].content[1];
+  assert.equal(image.type, 'input_image');
+  assert.equal(image.detail, 'high');
+  assert.match(image.image_url, /^data:image\/jpeg;base64,/);
+});
+
+test('单页网关超时后自动降低该页推理强度并恢复', { timeout: 30000 }, async t => {
+  const f = await setup(t);
+  await f.request('/api/settings', { method: 'PUT', body: {
+    ...f.connection, baseUrl: f.connection.baseUrl + '/responses', reasoningEffort: 'high',
+  } });
+  const upload = await f.upload('transient.pdf', await academicPdf({ pages: 3 }));
+  assert.equal(upload.status, 202);
+  const id = upload.data[0].id;
+  f.mode('timeout-on-high');
+  assert.equal((await f.start(id, 1, 3)).status, 202);
+  const job = await f.waitJob(id);
+  assert.equal(job.status, 'ready', job.error);
+  assert.equal(job.completed_pages, 3);
+  assert.deepEqual(f.calls.map(body => [
+    Number(body.input[0].content[0].text.match(/PDF page (\d+)/)[1]), body.reasoning.effort,
+  ]), [[1, 'high'], [2, 'high'], [2, 'medium'], [3, 'high']]);
+  assert.equal((await f.request('/api/settings')).data.reasoningEffort, 'high');
+});
 
 test('PDF AI 版面解析：双/三栏页面图片、后台进度、核对采用、检索和历史证据保护', { timeout: 60000 }, async t => {
   const f = await setup(t); const { request } = f;
@@ -133,8 +191,11 @@ test('PDF AI 边界：扫描页、局部采用、失败不覆盖、取消队列�
   assert.equal(after.chunks.find(c => c.page === 2).id, page2.id, '未选页面不受影响');
   const activeIds = after.chunks.map(c => c.id);
   for (const mode of ['failure', 'invalid', 'truncated']) {
+    const attemptsBefore = f.calls.length;
     f.mode(mode); assert.equal((await f.start(id, 2, 2)).status, 202);
     job = await f.waitJob(id); assert.equal(job.status, 'failed');
+    assert.equal(f.calls.length - attemptsBefore, mode === 'failure' ? 3 : 1);
+    if (mode === 'failure') assert.match(job.error, /第 2 页.*已自动重试 2 次.*HTTP 503/);
     assert.deepEqual((await request(`/api/sources/${id}`)).data.chunks.map(c => c.id), activeIds);
     assert.equal((await f.action(id, job.id, 'apply')).status, 409);
   }
@@ -149,7 +210,8 @@ test('PDF AI 边界：扫描页、局部采用、失败不覆盖、取消队列�
   for (let i = 0; i < 100 && f.calls.length === oldCalls; i++) await delay(20);
   assert.equal(f.calls.length, oldCalls + 1, '确认模型请求已进入等待后测试取消');
   const blank = await f.upload('scanned-like.pdf', await academicPdf({ pages: 1, scanned: true }));
-  assert.equal(blank.data[0].status, 'failed'); const blankId = blank.data[0].id;
+  assert.equal(blank.data[0].status, 'ready'); const blankId = blank.data[0].id;
+  assert.equal((await request(`/api/sources/${blankId}`)).data.pages, 1);
   const queued = await f.start(blankId, 1, 1); assert.equal(queued.status, 202);
   assert.equal((await f.action(blankId, queued.data.id, 'cancel')).status, 200);
   assert.equal((await f.action(id, job.id, 'cancel')).status, 200);

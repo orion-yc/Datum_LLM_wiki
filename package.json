@@ -14,12 +14,19 @@
     "build:all": "pnpm build:backend && pnpm build",
     "start": "node scripts/backend.mjs start",
     "test": "node --test tests/*.test.mjs",
-    "test:e2e": "node scripts/e2e.mjs && node scripts/team-e2e.mjs && node scripts/wiki-e2e.mjs && node scripts/pdf-e2e.mjs && node scripts/library-e2e.mjs"
+    "test:e2e": "node scripts/e2e.mjs && node scripts/reader-selections-e2e.mjs && node scripts/team-e2e.mjs && node scripts/wiki-e2e.mjs && node scripts/book-e2e.mjs && node scripts/pdf-e2e.mjs && node scripts/pdf-review-e2e.mjs && node scripts/pdf-figures-e2e.mjs && node scripts/library-e2e.mjs && node scripts/upload-e2e.mjs && node scripts/upload-retry-e2e.mjs && node scripts/projects-e2e.mjs"
   },
   "dependencies": {
+    "github-slugger": "2.0.0",
+    "katex": "0.19.1",
     "lucide-react": "0.468.0",
+    "monaco-editor": "0.55.1",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5"
   },
   "devDependencies": {
     "@types/react": "19.2.2",

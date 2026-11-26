@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { createServer } from 'node:http';
 import { testServer } from './helpers.mjs';
 
@@ -96,4 +99,108 @@ test('模型推理强度：持久化、真实请求、兼容参数重试、错�
   assert.equal((await ask()).status, 200);
   assert.equal(Object.hasOwn(calls.at(-1), 'reasoning_effort'), false);
   assert.equal(calls.at(-1).max_tokens, 4000);
+});
+
+test('中转连接使用选定协议和流式传输，按来源保存凭据', async t => {
+  const app = await testServer();
+  t.after(() => app.close());
+  const { request } = app;
+  await request('/api/auth/setup', { method: 'POST', body: { password: 'relay-test-password' } });
+  const initial = (await request('/api/settings')).data;
+  assert.equal(initial.protocol, 'auto');
+  assert.equal(initial.stream, false);
+
+  const calls = [];
+  const content = '闭区间边界。[1]';
+  const completed = { status: 'completed', output: [{ type: 'message', role: 'assistant',
+    content: [{ type: 'output_text', text: content }] }] };
+  let mode = 'complete';
+  const event = data => 'data: ' + JSON.stringify(data) + '\r\n\r\n';
+  async function listen() {
+    const relay = createServer(async (req, res) => {
+      const parts = [];
+      for await (const part of req) parts.push(part);
+      const payload = JSON.parse(Buffer.concat(parts).toString());
+      calls.push({ path: req.url, headers: req.headers, payload });
+      if (!payload.stream || mode === 'json') {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(req.url.endsWith('/responses') ? completed : { choices: [{ message: { content } }] }));
+        return;
+      }
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      const delta = Buffer.from(': heartbeat\r\n\r\n' + event({ type: 'response.output_text.delta', delta: content }));
+      const split = delta.indexOf('闭') + 1;
+      res.write(delta.subarray(0, split));
+      await delay(5);
+      res.write(delta.subarray(split));
+      if (mode === 'error') res.end(event({type:'error', code:'server_error', message:'SYNTHETIC_PRIVATE_DETAIL'}));
+      else if (mode === 'incomplete') res.end(event({type:'response.incomplete', response:{status:'incomplete'}}));
+      else if (mode === 'truncated') res.end();
+      else res.end(event({type:'response.completed', response:mode === 'deltas' ? { status:'completed', output:[] } : completed}));
+    });
+    await new Promise(resolve => relay.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise(resolve => relay.close(resolve)));
+    return 'http://127.0.0.1:' + relay.address().port + '/v1';
+  }
+
+  const baseUrl = await listen();
+  const save = (fields = {}) => request('/api/settings', { method:'PUT', body:{baseUrl, model:'relay-model', ...fields} });
+  const probe = () => request('/api/settings/test', { method:'POST' });
+  const key = 'synthetic-relay-bearer';
+  const actor = 'synthetic-relay-actor';
+  const saved = await save({ protocol:'responses', stream:true, apiKey:key, actorHeader:actor });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.endpoint, baseUrl + '/responses');
+  assert.equal(saved.data.actorHeaderConfigured, true);
+  await app.restart();
+  for (const publicSettings of [saved.data, (await request('/api/settings')).data]) {
+    assert.equal(publicSettings.protocol, 'responses');
+    assert.equal(publicSettings.stream, true);
+    for (const credential of [key, actor]) assert.ok(!JSON.stringify(publicSettings).includes(credential));
+  }
+  const db = await readFile(join(app.dataDir, 'knowledge.sqlite'));
+  const wal = await readFile(join(app.dataDir, 'knowledge.sqlite-wal')).catch(e => {
+    if (e.code === 'ENOENT') return Buffer.alloc(0);
+    throw e;
+  });
+  for (const credential of [key, actor]) assert.ok(!Buffer.concat([db, wal]).includes(credential));
+
+  const sample = (await request('/api/sources/sample', {method:'POST'})).data;
+  await app.ready(sample.id);
+  const chat = (await request('/api/conversations', {method:'POST',body:{source_id:sample.id}})).data;
+  const ask = () => request('/api/conversations/' + chat.id + '/messages', {method:'POST',body:{content:'二分查找的边界是什么？'}});
+  for (mode of ['complete', 'deltas', 'json']) {
+    const answer = await ask();
+    assert.equal(answer.status, 200, mode + ' ' + JSON.stringify(answer.data.error));
+    assert.equal(answer.data.messages.at(-1).content, content);
+    const sent = calls.at(-1);
+    assert.equal(sent.path, '/v1/responses');
+    assert.equal(sent.headers.authorization, 'Bearer ' + key);
+    assert.equal(sent.headers['x-openai-actor-authorization'], actor);
+    assert.equal(sent.payload.stream, true);
+    assert.equal(sent.payload.store, false);
+  }
+  for (mode of ['error','incomplete','truncated']) {
+    const failure = await probe();
+    assert.equal(failure.status, 502, mode);
+    assert.ok(!JSON.stringify(failure.data).includes('SYNTHETIC_PRIVATE_DETAIL'));
+  }
+  mode = 'complete';
+  for (const [protocol, suffix, expected] of [
+    ['auto','/responses','/responses'], ['auto','','/chat/completions'], ['chat','','/chat/completions'],
+  ]) {
+    const configured = await save({protocol, baseUrl:baseUrl + suffix, stream:false});
+    assert.equal(configured.data.endpoint, baseUrl + expected);
+    assert.equal((await probe()).status, 200);
+    assert.equal(calls.at(-1).path, '/v1' + expected);
+    assert.ok(!calls.at(-1).payload.stream);
+  }
+
+  const otherOrigin = await listen();
+  const changed = await save({baseUrl:otherOrigin});
+  assert.equal(changed.data.keyConfigured, false);
+  assert.equal(changed.data.actorHeaderConfigured, false);
+  assert.equal((await probe()).status, 200);
+  assert.equal(calls.at(-1).headers.authorization, undefined);
+  assert.equal(calls.at(-1).headers['x-openai-actor-authorization'], undefined);
 });

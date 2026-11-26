@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react';
 
+export class ApiError extends Error {
+  constructor(message: string, public status: number) { super(message); }
+}
+
 export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const form = options.body instanceof FormData;
   const response = await fetch(path, { ...options, headers: { ...(!form && options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });
-  const data = await response.json().catch(() => ({ error: '服务器未返回有效结果，请稍后重试。' }));
+  const data = await response.json().catch(() => null);
+  if (response.status === 401 && !path.startsWith('/api/auth')) window.dispatchEvent(new Event('auth-expired'));
+  if (data === null) {
+    throw new ApiError(response.status === 504 || response.status === 524
+      ? '上传或处理请求超时，请重试；已保存的分块会保留。'
+      : `服务器响应异常（HTTP ${response.status}），请稍后重试。`, response.status);
+  }
   if (!response.ok) {
-    if (response.status === 401 && !path.startsWith('/api/auth')) window.dispatchEvent(new Event('auth-expired'));
-    throw new Error(data.error || `请求未完成（${response.status}）`);
+    throw new ApiError(data.error || `请求未完成（${response.status}）`, response.status);
   }
   return data;
 }

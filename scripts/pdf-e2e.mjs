@@ -67,8 +67,9 @@ try {
 
   await page.goto(`${server.base}/#/library/${id}`);
   await page.getByRole('button', { name: 'AI 版面解析', exact: true }).click();
+  await dialog().getByLabel('解析范围', { exact: true }).selectOption('range');
   await page.getByLabel('起始页', { exact: true }).fill('1'); await page.getByLabel('结束页', { exact: true }).fill('2');
-  block(); await dialog().getByRole('button', { name: '开始 AI 解析', exact: true }).click();
+  block(); await dialog().getByRole('button', { name: '开始增量解析', exact: true }).click();
   await until(() => calls.length > 0, 'No vision request received');
   assert.equal(calls[0].model, 'vision-pdf-model');
   const image = calls[0].messages[0].content.find(part => part.type === 'image_url');
@@ -76,13 +77,16 @@ try {
   await dialog().getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('button', { name: '查看 AI 解析', exact: true }).click(); await visible(dialog().getByRole('button', { name: '取消解析', exact: true }));
   mode = 'normal'; gate.resolve(); await waitJob(id, 'ready');
-  await visible(dialog().getByRole('button', { name: '已核对，采用所选页解析', exact: true }));
+  await visible(dialog().getByRole('button', { name: '核查并采用本页', exact: true }));
   assert.deepEqual((await server.request(`/api/sources/${id}`)).data.chunks, original.chunks, 'Draft must not change current reading');
   await visible(dialog().getByText('本页需要留意：Verify equation symbols against the original PDF.', { exact: true }));
   await dialog().getByLabel('查看解析页', { exact: true }).selectOption('2');
-  const originalImage = dialog().getByRole('img', { name: '原始 PDF 第 2 页', exact: true });
-  assert.match(await originalImage.getAttribute('src'), /\/pages\/2$/);
-  await until(() => originalImage.evaluate(img => img.complete && img.naturalWidth > 0), 'Original page image did not load');
+  const originalLink = dialog().getByRole('link', { name: '查看第 2 页整页原图', exact: true });
+  assert.match(await originalLink.getAttribute('href'), /\/pages\/2$/);
+  assert.equal(await page.evaluate(() => performance.getEntriesByType('resource').some(entry => /\/pages\/[12]$/.test(entry.name))), false);
+  const [originalTab] = await Promise.all([page.context().waitForEvent('page'), originalLink.click()]);
+  await originalTab.locator('img').evaluate(img => img.decode());
+  await originalTab.close();
   await visible(dialog().getByRole('table')); await page.screenshot({ path: join(out, 'pdf-ai-review-desktop.png') });
   console.log('✓ 多栏 PDF 逐页图像请求、后台关闭重开、页码切换、原文与表格对照');
 
@@ -96,7 +100,7 @@ try {
   await mobile.goto(`${server.base}/#/library/${id}`); await mobile.getByRole('button', { name: '查看 AI 解析', exact: true }).click();
   const mobileDialog = mobile.getByRole('dialog', { name: 'AI 版面解析', exact: true });
   await visible(mobileDialog.getByRole('table'));
-  assert.equal(await mobileDialog.getByRole('button', { name: '已核对，采用所选页解析', exact: true }).count(), 0);
+  assert.equal(await mobileDialog.getByRole('button', { name: '核查并采用本页', exact: true }).count(), 0);
   assert.equal(await mobileDialog.getByRole('button', { name: '放弃本次结果', exact: true }).count(), 0);
   assert.equal(await mobileDialog.getByRole('checkbox', { name: '编辑校对正文', exact: true }).count(), 0);
   assert.ok(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
@@ -106,7 +110,9 @@ try {
 
   await dialog().getByRole('checkbox', { name: '编辑校对正文', exact: true }).check();
   await dialog().getByLabel('第 2 页解析正文', { exact: true }).fill('# Corrected page\n\nCORRECTEDPDFMARKER Confirmed equation and column order.');
-  await dialog().getByRole('button', { name: '已核对，采用所选页解析', exact: true }).click();
+  await dialog().getByRole('button', { name: '标记范围已核查', exact: true }).click();
+  await dialog().getByRole('button', { name: /^采用全部已核查页/ }).click();
+  await dialog().getByRole('button', { name: '关闭', exact: true }).click();
   await visible(page.getByText('CORRECTEDPDFMARKER Confirmed equation and column order.', { exact: true }));
   assert.equal((await job(id)).status, 'applied');
   const adopted = (await server.request(`/api/sources/${id}`)).data;
@@ -115,10 +121,11 @@ try {
   console.log('✓ 手机对照无溢出、只读权限、编辑校对后采用并参与搜索');
 
   await page.getByRole('button', { name: 'AI 版面解析', exact: true }).click(); mode = 'failure';
-  await dialog().getByRole('button', { name: '开始 AI 解析', exact: true }).click(); await waitJob(id, 'failed');
-  await visible(dialog().getByRole('button', { name: '重新发起 AI 解析', exact: true }));
+  await dialog().getByRole('checkbox', { name: '重新解析所选页（不复用，会再次调用模型）', exact: true }).check();
+  await dialog().getByRole('button', { name: '重新解析所选范围', exact: true }).click(); await waitJob(id, 'failed');
+  await visible(dialog().getByRole('button', { name: '继续未完成页面', exact: true }));
   assert.deepEqual((await server.request(`/api/sources/${id}`)).data.chunks, adopted.chunks);
-  block(); const before = calls.length; await dialog().getByRole('button', { name: '重新发起 AI 解析', exact: true }).click();
+  block(); const before = calls.length; await dialog().getByRole('button', { name: '继续未完成页面', exact: true }).click();
   await until(() => calls.length > before, 'Retry did not request model');
   await dialog().getByRole('button', { name: '取消解析', exact: true }).click(); await waitJob(id, 'cancelled');
   mode = 'normal'; gate.resolve(); await dialog().getByRole('button', { name: '关闭', exact: true }).click();
@@ -130,11 +137,37 @@ try {
   const scan = (await server.request('/api/sources')).data.find(source => source.title === '扫描论文');
   await waitJob(scan.id, 'ready'); await page.goto(`${server.base}/#/library/${scan.id}`);
   await page.getByRole('button', { name: '查看 AI 解析', exact: true }).click();
-  await visible(dialog().getByRole('button', { name: '已核对，采用所选页解析', exact: true }));
-  await dialog().getByRole('button', { name: '已核对，采用所选页解析', exact: true }).click();
+  await visible(dialog().getByRole('button', { name: '核查并采用本页', exact: true }));
+  await dialog().getByRole('button', { name: '标记范围已核查', exact: true }).click();
+  await dialog().getByRole('button', { name: /^采用全部已核查页/ }).click();
+  await dialog().getByRole('button', { name: '关闭', exact: true }).click();
   await visible(page.getByText('Left column evidence, followed by the right column.', { exact: true }));
   assert.equal((await server.request(`/api/sources/${scan.id}`)).data.status, 'ready');
   console.log('✓ 模型失败保护、网页重试与取消、上传时启用 AI 处理图片型扫描 PDF');
+  await page.goto(`${server.base}/#/library/${id}`);
+  await page.getByRole('button', { name: 'AI 版面解析', exact: true }).click();
+  await dialog().getByLabel('解析范围', { exact: true }).selectOption('all');
+  block();
+  await dialog().getByRole('checkbox', { name: '重新解析所选页（不复用，会再次调用模型）', exact: true }).check();
+  await dialog().getByRole('button', { name: '重新解析所选范围', exact: true }).click();
+  await until(async () => (await job(id)).status === 'running', 'Whole document did not start');
+  await dialog().getByRole('button', { name: '暂停解析', exact: true }).click();
+  await until(async () => (await job(id)).status === 'paused', 'Whole document did not pause');
+  mode = 'normal'; gate.resolve();
+  await dialog().getByRole('button', { name: '关闭', exact: true }).click();
+  await server.restart(); await page.reload();
+  await page.getByRole('button', { name: '查看 AI 解析', exact: true }).click();
+  await visible(dialog().getByRole('button', { name: '继续未完成页面', exact: true }));
+  await dialog().getByRole('button', { name: '继续未完成页面', exact: true }).click();
+  await waitJob(id, 'ready');
+  const completedLong = await job(id);
+  assert.equal(completedLong.first_page, 1); assert.equal(completedLong.last_page, 2);
+  await visible(dialog().getByRole('button', { name: '核查并采用本页', exact: true }));
+  await dialog().getByRole('button', { name: '标记范围已核查', exact: true }).click();
+  await dialog().getByRole('button', { name: /^采用全部已核查页/ }).click();
+  await dialog().getByRole('button', { name: '关闭', exact: true }).click();
+  await dialog().waitFor({ state: 'hidden' });
+  console.log('✓ 整份 PDF 一次排队、暂停跨重启保留、继续未完成页与分批采用');
   assert.deepEqual(errors, []); console.log('PDF AI 浏览器验收全部通过。');
 } catch (error) {
   console.error('PDF browser failure:', await page.locator('[role="alert"]').allTextContents(), server.logs());

@@ -1,0 +1,43 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { projectFixture, ready, readerImage } from './projects-fixture.mjs';
+
+test('项目阅读器：目录、完整源码、已导入版本图片、权限及按内容缓存翻译', async t => {
+  const fixture = await projectFixture({reader:true,archive:true});
+  t.after(()=>fixture.close());
+  const {app}=fixture;
+  await app.request('/api/auth/setup',{method:'POST',body:{password:'project-test-password'}});
+  const created=await app.request('/api/projects',{method:'POST',body:{url:'https://github.com/fixture/garden'}});
+  const detail=await ready(app,created.data.id), endpoint='/api/projects/'+created.data.id;
+  const directory=await app.request(endpoint+'/tree');
+  assert.equal(directory.status,200,JSON.stringify(directory.data));
+  assert.deepEqual(directory.data.entries.filter(x=>x.directory).map(x=>x.name),['images','src','tests']);
+  assert.equal((await app.request(endpoint+'/tree?directory=src')).data.entries[0].name,'garden.cpp');
+  assert.equal((await app.request(endpoint+'/tree?directory=..')).status,400);
+  const readme=(await app.request(endpoint+'/reader?path=README.md')).data;
+  assert.equal(readme.view,'markdown');
+  assert.match(readme.body,/\| Water \| 1/);
+  assert.equal((await app.request(endpoint+'/reader?path=images%2Fsample.png')).data.view,'image');
+  const img=endpoint+'/image?path=images%2Fsample.png';
+  assert.equal((await app.request(img,{auth:false})).status,401);
+  const fetchImage=()=>fetch(app.base+img,{headers:{Cookie:app.getCookie()}});
+  const first=await fetchImage();
+  assert.equal(first.status,200);
+  assert.match(first.headers.get('content-type'),/^image\/png/);
+  assert.deepEqual(Buffer.from(await first.arrayBuffer()),readerImage);
+  assert.equal((await app.request(endpoint+'/image?path=images%2Fbad.png')).status,415);
+  assert.equal((await app.request(endpoint+'/image?path=https%3A%2F%2Fevil.test%2Fx.png')).status,400);
+  assert.equal((await fetchImage()).status,200);
+  assert.equal(fixture.downloaded.filter(path=>path==='images/sample.png').length,1);
+
+  const body={snapshot:detail.snapshot.id,path:'README.md',first:1,last:2,mode:'markdown',blocks:[{first:1,last:1},{first:2,last:2}]};
+  assert.equal((await app.request(endpoint+'/translate',{method:'POST',body})).status,400);
+  await app.request('/api/settings',{method:'PUT',body:{model:'local-mock',baseUrl:fixture.endpoint+'/v1'}});
+  const firstTranslation=await app.request(endpoint+'/translate',{method:'POST',body});
+  assert.equal(firstTranslation.status,200,JSON.stringify(firstTranslation.data));
+  assert.equal(firstTranslation.data.answer,'按日期记录浇水。');
+  assert.equal(firstTranslation.data.cached,false);
+  assert.match(firstTranslation.data.url,/#L1-L2$/);
+  assert.equal((await app.request(endpoint+'/translate',{method:'POST',body})).data.cached,true);
+  assert.equal(fixture.calls(),1);
+});

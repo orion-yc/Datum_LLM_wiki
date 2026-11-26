@@ -17,7 +17,7 @@ jobs:
       - name: Install C++ and PDF dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ qt6-base-dev libqt6sql6-sqlite libssl-dev poppler-utils poppler-data
+          sudo apt-get install -y cmake g++ qt6-base-dev libqt6sql6-sqlite libssl-dev libarchive-dev poppler-utils poppler-data
           npm install --global pnpm@11.25.0
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:all

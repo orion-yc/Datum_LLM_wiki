@@ -1,4 +1,6 @@
 #include "core.hpp"
+#include "projects.hpp"
+#include "book_worker.hpp"
 #include <csignal>
 #include <iostream>
 
@@ -37,7 +39,9 @@ int main(int argc, char **argv) {
       for (auto s : db.all("SELECT id FROM sources WHERE status='processing'"))
         ingest(db, str(s.toObject(), "id"));
     }
+    BookWorker bookWorker;
     PdfWorker pdfWorker;
+    ProjectWorker projectWorker;
     httplib::Server server;
     server.new_task_queue = [] { return new httplib::ThreadPool(8, 32); };
     runningServer = &server;
@@ -74,7 +78,7 @@ int main(int argc, char **argv) {
         if (req.method != "GET" && req.method != "HEAD" && !qs(req.path).startsWith("/api/team") &&
             req.path != "/api/settings/password")
           ctx.needEditor();
-        if (teamRoutes(ctx) || collaborationRoutes(ctx) || researchRoutes(ctx) || wikiRoutes(ctx) ||
+        if (projectRoutes(ctx) || uploadRoutes(ctx) || teamRoutes(ctx) || collaborationRoutes(ctx) || researchRoutes(ctx) || wikiRoutes(ctx) ||
             pdfRoutes(ctx) || sourceManagementRoutes(ctx) || learningRoutes(ctx))
           return;
         throw Error(404, "接口不存在。");
@@ -105,7 +109,7 @@ int main(int argc, char **argv) {
       res.set_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
       res.set_header("Content-Security-Policy",
                      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-                     "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-src "
+                     "img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self'; frame-src "
                      "'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'");
     });
     const auto dist = qEnvironmentVariable("STATIC_DIR", "dist");

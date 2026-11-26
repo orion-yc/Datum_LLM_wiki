@@ -1,0 +1,31 @@
+.book-study .section-heading, .book-study .button-row, .book-study .form-footer { flex-wrap:wrap; }
+.book-options, .book-entry-title, .book-entry-tools { display:flex; align-items:center; flex-wrap:wrap; gap:.65rem; }
+.book-options, .book-entry-title { justify-content:space-between; }
+.book-options { margin:1rem 0; }
+.book-entries { list-style:none; margin:1rem 0; padding:0; }
+.book-entries li { padding:.85rem 0; border-bottom:1px solid var(--border); }
+.book-entries .book-subsection { padding-inline-start:1.2rem; }
+.book-entry-fields { display:grid; grid-template-columns:4rem minmax(0,1fr) auto; gap:.5rem; align-items:center; }
+.book-entry-fields label, .book-matches label { display:flex; align-items:center; gap:.5rem; font-size:.8rem; }
+.book-entry-fields input, .book-entry-fields select, .book-matches select { border:1px solid var(--border); border-radius:6px; padding:.45rem; min-width:0; max-width:100%; background:white; }
+.book-entry-fields input[type=number] { width:4.5rem; }
+.book-entry-tools { margin-top:.4rem; font-size:.8rem; }
+.book-entry-tools a,.book-matches a,.book-entry-title a { color:var(--primary); overflow-wrap:anywhere; }
+.book-entry-tools button { background:transparent; border:0; color:var(--muted); text-decoration:underline; }
+.book-matches { margin:.6rem 0; font-size:.8rem; }
+.book-matches a { display:block; margin:.4rem 0; }
+.book-matches summary { cursor:pointer; }
+.book-matches label { margin-top:.4rem; flex-wrap:wrap; }
+@media(max-width:600px) {
+  .book-entry-fields { grid-template-columns:3.5rem minmax(0,1fr); }
+  .book-entry-fields label { grid-column:2; }
+  .book-entry-tools button,.book-entry-tools a { padding:.55rem .1rem; }
+  .book-entry-title strong,.book-entry-title a { flex-basis:100%; overflow-wrap:anywhere; }
+}
+
+.book-entries .book-subsubsection { padding-inline-start:2.4rem; }
+.book-toc-range, .book-toc-range label { display:flex; align-items:center; gap:.55rem; flex-wrap:wrap; }
+.book-toc-range input { width:4.6rem; padding:.45rem; border:1px solid var(--border); border-radius:6px; }
+
+.book-job-status { margin: 1rem 0; padding: .75rem 1rem; border: 1px solid var(--border); border-radius: 8px; }
+.book-job-status [role=status] { display: flex; align-items: baseline; flex-wrap: wrap; gap: .5rem; overflow-wrap: anywhere; }

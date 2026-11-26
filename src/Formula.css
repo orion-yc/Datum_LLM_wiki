@@ -1,0 +1,3 @@
+.formula-block { display: block; max-width: 100%; overflow-x: auto; padding: .15em 0; }
+.formula-inline { white-space: normal; }
+.formula-source { white-space: pre-wrap; overflow-wrap: anywhere; }

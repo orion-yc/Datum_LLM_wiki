@@ -35,6 +35,7 @@ try {
   await page.locator('.book-card').first().click();
   await visible(page.getByRole('button', { name: '整理知识点', exact: true }));
   await page.getByRole('button', { name: '整理知识点', exact: true }).click();
+  await page.getByRole('button', { name: '生成知识点草稿' }).click();
   await visible(page.locator('.reader-knowledge').first());
   await page.getByRole('button', { name: '添加笔记', exact: true }).count().then(async count => { if (!count) await page.getByRole('button', { name: /学习笔记/ }).click(); });
   await page.getByRole('button', { name: '添加笔记', exact: true }).click();
@@ -113,15 +114,24 @@ try {
   await new Promise(resolve => modelMock.listen(0, '127.0.0.1', resolve));
   const effortSelect = page.getByLabel('推理强度', { exact: true });
   assert.equal(await effortSelect.inputValue(), 'default');
+  await page.getByRole('button', { name: '使用 Codex 中转预设' }).click();
+  assert.equal(await page.getByLabel('接口协议').inputValue(), 'responses');
+  await page.getByLabel('API 基础地址').fill('http://127.0.0.1:' + modelMock.address().port + '/v1');
+  assert.equal(await page.getByLabel('响应方式').inputValue(), 'stream');
+  assert.equal(await page.getByRole('button', { name: '测试已保存的连接' }).isDisabled(), true);
+  await page.getByLabel('接口协议').selectOption('auto');
   await page.getByLabel('API 基础地址').fill('http://127.0.0.1:' + modelMock.address().port + '/v1');
   await page.getByLabel('模型名称', { exact: true }).fill('browser-reasoning-model');
   await effortSelect.selectOption('high');
   async function saveModel(test = false) {
     const saved = page.waitForResponse(response => response.url() === server.base + '/api/settings' && response.request().method() === 'PUT');
-    const tested = test ? page.waitForResponse(response => response.url() === server.base + '/api/settings/test') : null;
-    await page.getByRole('button', { name: test ? '保存并测试连接' : '保存设置', exact: true }).click();
+    await page.getByRole('button', { name: '保存设置', exact: true }).click();
     const result = await saved; assert.equal(result.status(), 200); await result.finished();
-    if (tested) { const response = await tested; await response.finished(); return response; }
+    if (test) {
+      const tested = page.waitForResponse(response => response.url() === server.base + '/api/settings/test');
+      await page.getByRole('button', { name: '测试已保存的连接', exact: true }).click();
+      const response = await tested; await response.finished(); return response;
+    }
     return result;
   }
   assert.equal((await saveModel(true)).status(), 200);

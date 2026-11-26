@@ -82,8 +82,9 @@ test('完整 API 流程：认证、资料、知识、模型、练习、重启与
     let body = ''; for await (const chunk of req) body += chunk; const payload = JSON.parse(body); calls.push({ payload, authorization: req.headers.authorization });
     if (req.url.startsWith('/fail')) { res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'upstream' })); }
     let content = '依据原文，闭区间仍有候选元素，因此继续循环。[1] 无效示例 [99]';
-    if (payload.messages[0].content.includes('只返回 JSON')) { const chunks = JSON.parse(payload.messages[1].content); content = JSON.stringify([{ title: '模型生成的知识点', summary: '依据提供原文整理。', chunk_id: chunks[0].chunk_id }]); }
+    if (payload.messages[0].content.includes('只返回 JSON')) { const { evidence } = JSON.parse(payload.messages[1].content); content = JSON.stringify([{ title: '模型生成的知识点', summary: '依据提供原文整理。', chunk_id: evidence[0].chunk_id }]); }
     if (payload.messages[0].content.includes('学习反馈助手')) content = '回答正确说明了闭区间的含义；建议补充空数组测试。';
+    if (payload.messages[0].content.includes('练习技能')) content = JSON.stringify({ title: '验证边界', description: '用单元素序列做一次查找。', criteria: '返回唯一候选值的位置。', evidence: '未经用户确认的实践' });
     res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ choices: [{ message: { content } }] }));
   });
   await new Promise(r => mock.listen(0, '127.0.0.1', r)); t.after(() => new Promise(r => mock.close(r)));
@@ -93,7 +94,20 @@ test('完整 API 流程：认证、资料、知识、模型、练习、重启与
   assert.equal((await request('/api/settings/test', { method: 'POST' })).status, 200); assert.equal(calls[0].authorization, 'Bearer secret-test-key-value');
   const modelAnswer = (await request(`/api/conversations/${chat.id}/messages`, { method: 'POST', body: { content: '二分查找的闭区间' } })).data;
   assert.equal(modelAnswer.messages.at(-1).mode, 'model'); assert.match(modelAnswer.messages.at(-1).content, /无效引用/); assert.ok(!modelAnswer.messages.at(-1).content.includes('[99]'));
-  const generation = await request(`/api/sources/${source.id}/generate`, { method: 'POST' }); assert.equal(generation.status, 201); assert.equal(generation.data.mode, 'model');
+  const generateKnowledge = () => request(`/api/sources/${source.id}/generate`, { method: 'POST', body: { focus: '边界' } });
+  const generation = await generateKnowledge(); assert.equal(generation.status, 201); assert.equal(generation.data.mode, 'model');
+  assert.equal(JSON.parse(calls.at(-1).payload.messages[1].content).focus, '边界');
+  assert.equal(generation.data.used_chunks, source.chunks.length);
+  const generated = generation.data.items[0];
+  assert.ok(generated.draft && source.chunks.some(c => c.id === generated.chunk_id));
+  assert.deepEqual((await generateKnowledge()).data.items, []);
+  const skillCount = (await request('/api/skills')).data.length;
+  const skillDraft = await request('/api/skills/draft', { method: 'POST', body: { knowledge_ids: [generated.id] } });
+  assert.equal(skillDraft.status, 200);
+  assert.deepEqual(skillDraft.data, { title: '验证边界', description: '用单元素序列做一次查找。', criteria: '返回唯一候选值的位置。' });
+  assert.equal(JSON.parse(calls.at(-1).payload.messages[1].content)[0].excerpt, source.chunks.find(c => c.id === generated.chunk_id).content);
+  assert.equal((await request('/api/skills')).data.length, skillCount);
+  assert.equal((await request('/api/skills/draft', { method: 'POST', body: { knowledge_ids: [] } })).status, 400);
   const practice2 = (await request('/api/practices', { method: 'POST', body: { knowledge_id: k.id } })).data;
   assert.equal((await request(`/api/practices/${practice2.id}/answer`, { method: 'POST', body: { answer: '循环条件是 left <= right。' } })).data.feedback_mode, 'model');
   await request('/api/settings', { method: 'PUT', body: { baseUrl: baseUrl.replace('/v1', '/fail'), model: 'mock-model' } });

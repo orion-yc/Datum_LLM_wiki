@@ -1,0 +1,15 @@
+[Unit]
+Description=Datum Knowledge Studio
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/yangchen/project/Datum_LLM_wiki
+ExecStart=/bin/sh /home/yangchen/project/Datum_LLM_wiki/deploy/run-native.sh
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

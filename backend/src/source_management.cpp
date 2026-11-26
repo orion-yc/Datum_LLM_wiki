@@ -1,10 +1,12 @@
-#include "core.hpp"
+#include "pdf_figures.hpp"
 
 Obj sourceDeletionInfo(Database &db, const QString &id) {
   auto source = db.must("sources", id);
   QString reason;
   if (str(source, "status") == "processing")
     reason = "资料正在解析，请处理结束后再删除。";
+  if (!db.one("SELECT id FROM pdf_parse_jobs WHERE source_id=? AND status IN ('queued','running','paused')", {id}).isEmpty())
+    reason = "请先取消这份资料的 AI 解析任务后再删除。";
   auto paper = db.one("SELECT title FROM papers WHERE source_id=?", {id});
   if (!paper.isEmpty())
     reason = "已关联论文《" + str(paper, "title") + "》，请先移除论文档案及其对比引用。";
@@ -37,6 +39,7 @@ void deleteSourceRecord(Database &db, const QString &id, const Obj &user) {
 }
 void deleteSourceFiles(const QString &id) {
   QFile::remove(dataDir + "/uploads/" + id);
+  clearPdfFigureCache(id);
   QDir(dataDir + "/pdf-previews/" + id).removeRecursively();
 }
 

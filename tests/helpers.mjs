@@ -9,12 +9,12 @@ import { binary, backendEnvironment } from '../scripts/backend.mjs';
 
 export const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 export async function availablePort() { const server = createServer(); await new Promise(r => server.listen(0, '127.0.0.1', r)); const port = server.address().port; await new Promise(r => server.close(r)); return port; }
-export async function testServer({ seed } = {}) {
+export async function testServer({ seed, env = {} } = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'zhixu-test-'));
   const port = await availablePort(), base = `http://127.0.0.1:${port}`;
   let child, logs = '', cookie = '';
   async function start() {
-    child = spawn(binary, [], { cwd: projectRoot, env: { ...backendEnvironment(), DATA_DIR: dataDir, PORT: String(port), HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    child = spawn(binary, [], { cwd: projectRoot, env: { ...backendEnvironment(), ...env, DATA_DIR: dataDir, PORT: String(port), HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     child.on('error', error => { logs += error.message; });
     child.stdout.on('data', d => { logs += d; }); child.stderr.on('data', d => { logs += d; });
     for (let i = 0; i < 120; i++) {

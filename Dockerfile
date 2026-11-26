@@ -11,7 +11,7 @@ RUN pnpm build
 FROM debian:bookworm-slim AS cpp-build
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake g++ make qt6-base-dev libssl-dev tzdata \
+    cmake g++ make qt6-base-dev libssl-dev libarchive-dev tzdata \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /source
 COPY CMakeLists.txt ./
@@ -23,7 +23,7 @@ RUN cmake -S . -B /build -DCMAKE_BUILD_TYPE=Release \
 FROM debian:bookworm-slim AS runtime
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libqt6core6 libqt6network6 libqt6sql6-sqlite libssl3 \
+    libqt6core6 libqt6gui6 libqt6network6 libqt6sql6-sqlite qt6-image-formats-plugins libssl3 libarchive13 \
     poppler-utils poppler-data ca-certificates tzdata curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 datum && useradd --uid 1000 --gid datum --no-create-home datum
