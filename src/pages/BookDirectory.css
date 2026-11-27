@@ -1,0 +1,14 @@
+.book-directory .book-outline-tree,
+.book-directory .book-outline-tree ul { list-style: none; margin: 0; }
+.book-directory .book-outline-tree { padding: 0; }
+.book-directory .book-outline-tree ul { padding-left: clamp(.75rem, 3vw, 1.75rem); }
+.book-directory .book-outline-tree li { padding: 0; }
+.book-directory .directory-entry { display: flex; align-items: baseline; gap: .35rem; min-width: 0; }
+.book-directory .directory-toggle, .book-directory .directory-toggle-space { width: 2rem; flex-shrink: 0; }
+.book-directory .directory-toggle { display: inline-grid; place-items: center; align-self: center; height: 2rem;
+  padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--purple-dark); }
+.book-directory .directory-entry > a, .book-directory .directory-entry > span:last-child { padding: .55rem .35rem; line-height: 1.5; }
+.book-directory .directory-entry > a { color: inherit; text-decoration: none; }
+.book-directory .directory-entry > a:hover { text-decoration: underline; }
+.book-directory .directory-entry a[aria-current], .book-directory .directory-toggle:hover { background: #f0edfc; color: var(--purple-dark); border-radius: 6px; }
+.book-directory .directory-resume { display: inline-block; margin: .2rem 0 .9rem; }

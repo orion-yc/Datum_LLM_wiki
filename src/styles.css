@@ -199,3 +199,12 @@
 .model-connection summary { cursor: pointer; font-size: 13px; }
 .model-connection details[open] > summary { margin-bottom: 12px; }
 .model-connection .form-footer { flex-wrap: wrap; }
+
+.modal.book-directory-drawer {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: min(32rem, 100%);
+  max-height: none;
+  border-radius: 0;
+  overscroll-behavior: contain;
+}

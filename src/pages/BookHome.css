@@ -1,0 +1,3 @@
+.wiki-directory-placeholder { display: grid; gap: 24px; padding: 30px; }
+.wiki-directory-placeholder span { width: min(18rem, 70%); height: 12px; border-radius: 6px; background: var(--line, #eceaf2); }
+.wiki-directory-placeholder span:nth-child(2) { width: min(14rem, 60%); }

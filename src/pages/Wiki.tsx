@@ -1,3 +1,4 @@
+import { BookBreadcrumb, BookPageTurns, useBookPosition } from './BookReading';
 import WikiRewriteDialog from './WikiRewriteDialog';
 import { wikiSectionAt, type RewriteTarget } from '../wikiRewriteRange';
 import WikiSelectionQuestion from './WikiSelectionQuestion';
@@ -5,7 +6,8 @@ import { MathText } from '../MathText';
 import { useEffect, useRef, useState } from 'react';
 import { PdfFigures } from './PdfFigures';
 import WikiSystemPicker, { type SystemChoice } from './WikiSystemPicker';
-import { BookDirectory, type BookDirectoryData } from './BookDirectory';
+import { BookDirectory, bookPageLink, type BookDirectoryData } from './BookDirectory';
+import './BookHome.css';
 import WholeStudy from './WholeStudy';
 import { ProjectBacklinks } from './Projects';
 import { ArrowLeft, ArrowUpRight, BookOpen, CheckCircle2, Download, FileText, History, Link2, Plus, Search, ShieldCheck, Sparkles } from 'lucide-react';
@@ -128,13 +130,14 @@ function WikiHistoryDialog({ page, onClose }: { page: WikiPage; onClose: () => v
 function WikiDetail({ id }: { id: string }) {
   const { revision, refresh, notify, canEdit, isAdmin } = useApp(); const { data: page, loading, error } = useData<WikiPage>(`/api/wiki/${id}`, revision);
   const { data: systems } = useData<WikiSystem[]>('/api/wiki/systems', revision);
+  const position = useBookPosition(id, page?.system_id);
   const systemTitle = (systemId?: string | null) => !systemId ? '待归类' : systems?.find(s => s.id === systemId)?.title || '知识体系';
   const [edit, setEdit] = useState(false), [history, setHistory] = useState(false), [transition, setTransition] = useState<'draft' | 'published' | null>(null), [deleting, setDeleting] = useState(false), [busy, setBusy] = useState(false);
   const [rewrite, setRewrite] = useState<{ page: WikiPage; target: RewriteTarget } | null>(null);
   const [undo, setUndo] = useState<{version: number; body: string; summary: string} | null>(null);
   if (error) return <ErrorBox message={error} retry={refresh} />; if (loading || !page) return <Loading />;
   const cite = (number: number) => { const element = document.getElementById(`wiki-evidence-${number}`) as HTMLDetailsElement | null; if (element) { element.open = true; element.scrollIntoView({ behavior: 'smooth', block: 'center' }); } };
-  return <><button className="back-link" onClick={() => navigate(`/wiki?system=${page.system_id || 'unassigned'}`)}><ArrowLeft size={15} />返回{systemTitle(page.system_id)}</button><PageTitle eyebrow="CONNECTED KNOWLEDGE, ORIGINAL EVIDENCE" title={<MathText text={page.title} />} description={`${systemTitle(page.system_id)} · ${page.category} · ${KINDS[page.kind]} · v${page._version} · ${formatDate(page.updated_at)}更新`} /><div className="wiki-detail-toolbar"><Badge tone={page.status === 'published' ? 'mint' : 'orange'}>{page.status === 'published' ? '已发布' : '草稿'}</Badge><div className="button-row"><Button variant="secondary" onClick={() => setHistory(true)}><History size={15} />历史版本</Button><a className="button secondary" href={`/api/wiki/${id}/export`} download><Download size={15} />导出 Markdown</a>{canEdit && page.status === 'draft' && <><Button variant="secondary" onClick={() => setEdit(true)}>编辑知识页</Button>
+  return <>{position ? <BookBreadcrumb position={position} /> : <button className="back-link" onClick={() => navigate(`/wiki?system=${page.system_id || 'unassigned'}`)}><ArrowLeft size={15} />返回{systemTitle(page.system_id)}</button>}<PageTitle eyebrow="CONNECTED KNOWLEDGE, ORIGINAL EVIDENCE" title={<MathText text={page.title} />} description={`${systemTitle(page.system_id)} · ${page.category} · ${KINDS[page.kind]} · v${page._version} · ${formatDate(page.updated_at)}更新`} /><div className="wiki-detail-toolbar"><Badge tone={page.status === 'published' ? 'mint' : 'orange'}>{page.status === 'published' ? '已发布' : '草稿'}</Badge><div className="button-row"><Button variant="secondary" onClick={() => setHistory(true)}><History size={15} />历史版本</Button><a className="button secondary" href={`/api/wiki/${id}/export`} download><Download size={15} />导出 Markdown</a>{canEdit && page.status === 'draft' && <><Button variant="secondary" onClick={() => setEdit(true)}>编辑知识页</Button>
       <Button variant="secondary" disabled={!page.body.trim()} onClick={() => setRewrite({page, target:{scope:'page', start:0, end:page.body.length}})}><Sparkles size={15}/>整页重新总结</Button>
       {undo?.version === page._version && <Button variant="ghost" disabled={busy} onClick={async () => {
         setBusy(true);
@@ -145,7 +148,7 @@ function WikiDetail({ id }: { id: string }) {
       }}>撤销上次改写</Button>}
       <Button onClick={() => setTransition('published')}><CheckCircle2 size={15} />核对并发布</Button></>}{isAdmin && page.status === 'published' && <Button variant="secondary" onClick={() => setTransition('draft')}>转为草稿</Button>}{canEdit && (page.status === 'draft' || isAdmin) && <Button variant="ghost" onClick={() => setDeleting(true)}>删除知识页</Button>}</div></div>
   <ProjectBacklinks type="wiki" id={id} />
-    {page.status === 'draft' && <Notice>此页正在整理。发布后，它会帮助问答定位原文；请核对关键结论与证据编号。</Notice>}<div className="wiki-detail-grid"><article className="panel wiki-article">{page.summary && <p className="wiki-summary"><MathText text={page.summary} /></p>}<div className="wiki-tags">{page.tags.map(tag => <Badge key={tag} tone="gray">{tag}</Badge>)}</div><WikiSelectionQuestion key={page.id} page={page} onCitation={cite} onRewrite={canEdit && page.status === 'draft' ? target => setRewrite({page, target}) : undefined} /><div className="wiki-article-evidence"><h2><BookOpen size={19} />原文依据 · {page.citations.length}</h2><EvidenceList citations={page.citations} /></div></article><aside className="wiki-side"><section className="panel"><h3><Link2 size={16} />关联知识页</h3>{page.related?.map(p => <button className="wiki-link" key={p.id} onClick={() => navigate(`/wiki/${p.id}`)}><span>{p.title}{p.system_id !== page.system_id && <small className="system-origin">{systemTitle(p.system_id)}</small>}</span><ArrowUpRight size={14} /></button>)}{!page.related?.length && <p className="muted small">编辑时关联相邻概念、前置方法或主题综述。</p>}</section><section className="panel"><h3><Link2 size={16} />哪些页面提到了我</h3>{page.backlinks?.map(p => <button className="wiki-link" key={p.id} onClick={() => navigate(`/wiki/${p.id}`)}><span>{p.title}{p.system_id !== page.system_id && <small className="system-origin">{systemTitle(p.system_id)}</small>}</span><ArrowUpRight size={14} /></button>)}{!page.backlinks?.length && <p className="muted small">还没有其他知识页关联此页。</p>}</section><section className="panel"><h3><ShieldCheck size={16} />知识的来处</h3><p className="muted small">引用内容由服务端读取原文。发布状态表示成员已核对，仍需结合适用条件理解。</p><Button write variant="ghost" disabled={busy} onClick={async () => { setBusy(true); try { const conversation = await post('/api/conversations'); refresh(); navigate(`/chat/${conversation.id}`); } catch (e) { notify((e as Error).message, 'error'); } finally { setBusy(false); } }}>带着问题去对话<ArrowUpRight size={14} /></Button></section></aside></div><Collaboration kind="wiki" targetId={id} />
+    {page.status === 'draft' && <Notice>此页正在整理。发布后，它会帮助问答定位原文；请核对关键结论与证据编号。</Notice>}<div className="wiki-detail-grid"><article className="panel wiki-article">{page.summary && <p className="wiki-summary"><MathText text={page.summary} /></p>}<div className="wiki-tags">{page.tags.map(tag => <Badge key={tag} tone="gray">{tag}</Badge>)}</div><WikiSelectionQuestion key={page.id} page={page} onCitation={cite} onRewrite={canEdit && page.status === 'draft' ? target => setRewrite({page, target}) : undefined} />{position && <BookPageTurns position={position} />}<div className="wiki-article-evidence"><h2><BookOpen size={19} />原文依据 · {page.citations.length}</h2><EvidenceList citations={page.citations} /></div></article><aside className="wiki-side"><section className="panel"><h3><Link2 size={16} />关联知识页</h3>{page.related?.map(p => <button className="wiki-link" key={p.id} onClick={() => navigate(`/wiki/${p.id}`)}><span>{p.title}{p.system_id !== page.system_id && <small className="system-origin">{systemTitle(p.system_id)}</small>}</span><ArrowUpRight size={14} /></button>)}{!page.related?.length && <p className="muted small">编辑时关联相邻概念、前置方法或主题综述。</p>}</section><section className="panel"><h3><Link2 size={16} />哪些页面提到了我</h3>{page.backlinks?.map(p => <button className="wiki-link" key={p.id} onClick={() => navigate(`/wiki/${p.id}`)}><span>{p.title}{p.system_id !== page.system_id && <small className="system-origin">{systemTitle(p.system_id)}</small>}</span><ArrowUpRight size={14} /></button>)}{!page.backlinks?.length && <p className="muted small">还没有其他知识页关联此页。</p>}</section><section className="panel"><h3><ShieldCheck size={16} />知识的来处</h3><p className="muted small">引用内容由服务端读取原文。发布状态表示成员已核对，仍需结合适用条件理解。</p><Button write variant="ghost" disabled={busy} onClick={async () => { setBusy(true); try { const conversation = await post('/api/conversations'); refresh(); navigate(`/chat/${conversation.id}`); } catch (e) { notify((e as Error).message, 'error'); } finally { setBusy(false); } }}>带着问题去对话<ArrowUpRight size={14} /></Button></section></aside></div><Collaboration kind="wiki" targetId={id} />
     {rewrite && <WikiRewriteDialog page={rewrite.page} target={rewrite.target} onClose={() => setRewrite(null)} onApply={async value => {
       const saved = await put<WikiPage>(`/api/wiki/${id}`, {...rewrite.page, ...value});
       setUndo({version:saved._version, body:rewrite.page.body, summary:rewrite.page.summary});
@@ -155,7 +158,13 @@ function WikiDetail({ id }: { id: string }) {
   </>;
 }
 
-export default function Wiki({ id, sourceId, systemKey }: { id?: string; sourceId?: string | null; systemKey?: string | null }) {
+function BookDirectoryPlaceholder() {
+  return <div role="status" aria-label="正在加载目录" className="panel wiki-directory-placeholder">
+    <span /><span /><span />
+  </div>;
+}
+
+export default function Wiki({ id, sourceId, systemKey, bookKey, cardsView }: { id?: string; sourceId?: string | null; systemKey?: string | null; bookKey?: string | null; cardsView?: boolean }) {
   const { revision, refresh, canEdit, isAdmin, notify } = useApp(); const { data: pages, loading, error } = useData<WikiPage[]>('/api/wiki', revision); const { data: audit, error: auditError } = useData<WikiAudit>('/api/wiki/audit', revision);
   const [tab, setTab] = useState('pages'), [search, setSearch] = useState(''), [status, setStatus] = useState('all'), [newOpen, setNewOpen] = useState(false), [manual, setManual] = useState(false);
   const [batch, setBatch] = useState(false), [chosen, setChosen] = useState(new Set<string>());
@@ -167,10 +176,24 @@ export default function Wiki({ id, sourceId, systemKey }: { id?: string; sourceI
   const currentSystem = systemKey === 'unassigned' ? null : system?.id;
   const title = systemKey === 'all' ? '全部知识页' : system?.title || '待归类';
   const folders = !systemKey;
+  const isNamedSystem = Boolean(systemKey && systemKey !== 'all' && systemKey !== 'unassigned');
   const {data: books, error: booksError} = useData<BookDirectoryData[]>(
-    system && !id ? `/api/wiki/systems/${system.id}/books` : null, revision);
+    isNamedSystem && !id ? '/api/wiki/systems/' + encodeURIComponent(systemKey!) + '/books' : null, revision);
+  const book = books?.find(row => row.source_id === bookKey) ?? (books?.length === 1 ? books[0] : undefined);
+  const hasBooks = Boolean(isNamedSystem && books?.length);
+  const loadingBooks = isNamedSystem && !books && !booksError;
+  const directoryView = hasBooks && !cardsView;
+  const showCardTools = !folders && !directoryView && !loadingBooks && !booksError;
+  function openBookView(source?: string, cards = false) {
+    if (!systemKey) return;
+    exitBatch();
+    setTab('pages');
+    const query = new URLSearchParams({system:systemKey});
+    if (source) query.set('book',source);
+    if (cards) query.set('view','cards');
+    navigate('/wiki?' + query.toString());
+  }
   const [bookSource, setBookSource] = useState<string | null>(null);
-  const showBooks = Boolean(books?.length) && !batch && !search.trim() && status === 'all' && tab === 'pages';
   useEffect(() => {
     setChosen(new Set()); setBatch(false); setSnapshot([]); setMoving(false);
     setSearch(''); setStatus('all'); setSystemForm(null); setTab('pages');
@@ -219,9 +242,9 @@ export default function Wiki({ id, sourceId, systemKey }: { id?: string; sourceI
   const nameSystem = (mode: 'new' | 'rename') => { setName(mode === 'rename' ? system?.title || '' : ''); setSystemMessage(''); setSystemForm(mode); };
   const openSystem = (key: string) => navigate(`/wiki?system=${encodeURIComponent(key)}`);
   const scoped = pages?.filter(p => systemKey === 'all' || (p.system_id || 'unassigned') === systemKey);
-  const filtered = scoped?.filter(p => (status === 'all' || status === p.status) && (p.title + p.summary + p.tags.join(' ')).toLowerCase().includes(search.toLowerCase()));
-  const listed = new Set(showBooks ? books?.flatMap(book => book.entries.map(e => e.wiki_id)) : []);
-  const cards = filtered?.filter(p => !listed.has(p.id));
+  const bookIds = bookKey && book && (books?.length || 0) > 1 ? new Set(book.entries.map(entry => entry.wiki_id)) : null;
+  const cardPages = bookIds ? scoped?.filter(page => bookIds.has(page.id)) : scoped;
+  const filtered = cardPages?.filter(p => (status === 'all' || status === p.status) && (p.title + p.summary + p.tags.join(' ')).toLowerCase().includes(search.toLowerCase()));
   const eligible = (filtered || []).filter(page => isAdmin || page.status === 'draft');
   const selected = eligible.filter(page => chosen.has(page.id));
   const all = eligible.length > 0 && selected.length === eligible.length;
@@ -229,19 +252,19 @@ export default function Wiki({ id, sourceId, systemKey }: { id?: string; sourceI
     setChosen(old => { const next = new Set(old); if (next.has(page.id)) next.delete(page.id); else next.add(page.id); return next; });
   }
   if (systemKey && systemKey !== 'all' && systemKey !== 'unassigned' && !system) {
-    if (systemLoading) return <Loading />;
+    if (systemLoading) return <BookDirectoryPlaceholder />;
     return <><button className="back-link" onClick={() => navigate('/wiki')}><ArrowLeft size={15} />返回体系目录</button><ErrorBox message={systemError || '该知识体系不存在。'} retry={refresh} /></>;
   }
-  return <>{!folders && <button className="back-link" onClick={() => navigate('/wiki')}><ArrowLeft size={15} />返回体系目录</button>}<PageTitle eyebrow="FROM SOURCES TO UNDERSTANDING" title={folders ? '知识 Wiki' : title} description={folders ? '按知识体系浏览，沿关联知识页继续学习。' : `共 ${scoped?.length || 0} 篇知识页`} action={canEdit ? <div className="button-row"><Button variant="secondary" onClick={() => setManual(true)}><Plus size={16} />手动建立知识页</Button><Button onClick={() => setNewOpen(true)}><Sparkles size={16} />从资料整理</Button></div> : undefined} /><div className="research-tabs"><div className="tabs"><button className={tab === 'pages' ? 'active' : ''} onClick={() => setTab('pages')}>知识目录</button><button className={tab === 'audit' ? 'active' : ''} onClick={() => { exitBatch(); setTab('audit'); }}>质量检查{Boolean(audit?.issues.length) && <span>{audit?.issues.length}</span>}</button></div>{tab === 'pages' && !folders && <><div className="input-icon"><Search size={16} /><input aria-label="筛选 Wiki 知识页" value={search} onChange={e => { setChosen(new Set()); setSearch(e.target.value); }} placeholder="搜索主题、摘要或标签…" /></div><select className="wiki-status-filter" aria-label="Wiki 发布状态" value={status} onChange={e => { setChosen(new Set()); setStatus(e.target.value); }}><option value="all">全部状态</option><option value="draft">整理中的草稿</option><option value="published">已核对发布</option></select>{canEdit && <Button variant="secondary" onClick={() => batch ? exitBatch() : setBatch(true)}>{batch ? '取消批量选择' : '批量管理'}</Button>}</>}{tab === 'pages' && !folders && system && canEdit && <Button variant="ghost" onClick={() => nameSystem('rename')}>重命名体系</Button>}{tab === 'audit' && <Button variant="secondary" onClick={refresh}>重新检查</Button>}</div>
-    {tab === 'pages' && batch && canEdit && <div className="wiki-selection-bar">
+  return <>{!folders && <button className="back-link" onClick={() => bookKey && (books?.length || 0) > 1 ? openBookView() : navigate('/wiki')}><ArrowLeft size={15} />{bookKey && (books?.length || 0) > 1 ? '返回本体系书目' : '返回体系目录'}</button>}<PageTitle eyebrow="FROM SOURCES TO UNDERSTANDING" title={folders ? '知识 Wiki' : book?.title || title} description={folders ? '按知识体系浏览，沿关联知识页继续学习。' : `共 ${cardPages?.length || 0} 篇知识页`} action={canEdit ? <div className="button-row"><Button variant="secondary" onClick={() => setManual(true)}><Plus size={16} />手动建立知识页</Button><Button onClick={() => setNewOpen(true)}><Sparkles size={16} />从资料整理</Button></div> : undefined} /><div className="research-tabs"><div className="tabs">{hasBooks ? <>
+      <button className={tab === 'pages' && directoryView ? 'active' : ''} onClick={() => openBookView(bookKey || undefined)}>章节目录</button>
+      <button className={tab === 'pages' && cardsView ? 'active' : ''} onClick={() => openBookView(bookKey || undefined,true)}>知识卡片</button>
+    </> : <button className={tab === 'pages' ? 'active' : ''} onClick={() => setTab('pages')}>知识目录</button>}<button className={tab === 'audit' ? 'active' : ''} onClick={() => { exitBatch(); setTab('audit'); }}>质量检查{Boolean(audit?.issues.length) && <span>{audit?.issues.length}</span>}</button></div>{tab === 'pages' && showCardTools && <><div className="input-icon"><Search size={16} /><input aria-label="筛选 Wiki 知识页" value={search} onChange={e => { setChosen(new Set()); setSearch(e.target.value); }} placeholder="搜索主题、摘要或标签…" /></div><select className="wiki-status-filter" aria-label="Wiki 发布状态" value={status} onChange={e => { setChosen(new Set()); setStatus(e.target.value); }}><option value="all">全部状态</option><option value="draft">整理中的草稿</option><option value="published">已核对发布</option></select>{canEdit && <Button variant="secondary" onClick={() => batch ? exitBatch() : setBatch(true)}>{batch ? '取消批量选择' : '批量管理'}</Button>}</>}{tab === 'pages' && !folders && system && canEdit && <Button variant="ghost" onClick={() => nameSystem('rename')}>重命名体系</Button>}{tab === 'audit' && <Button variant="secondary" onClick={refresh}>重新检查</Button>}</div>
+    {tab === 'pages' && showCardTools && batch && canEdit && <div className="wiki-selection-bar">
       <label><input type="checkbox" checked={all} disabled={!eligible.length} onChange={() => setChosen(all ? new Set() : new Set(eligible.map(p => p.id)))} />全选筛选结果</label>
       <span className="muted small">已选 {selected.length} 篇{!isAdmin && ' · 可管理草稿'}</span>
       <Button variant="secondary" disabled={!selected.length} onClick={() => { setMoving(true); setTarget(''); setSnapshot(selected); setDeleteError(''); }}>移入体系</Button>
       <Button variant="danger" disabled={!selected.length} onClick={() => { setMoving(false); setSnapshot(selected); setDeleteError(''); }}>删除所选知识页</Button>
     </div>}
-    {booksError && <ErrorBox message={booksError} retry={refresh} />}
-    {showBooks && books?.map(book => <BookDirectory key={book.source_id} book={book}
-      manage={canEdit ? () => setBookSource(book.source_id) : undefined} />)}
     {bookSource && <NewWiki sourceId={bookSource} initialSystem={currentSystem} onClose={() => {setBookSource(null); refresh();}} />}
     {error && <ErrorBox message={error} retry={refresh} />}{tab === 'pages' ? folders ? <section>
       <div className="wiki-systems-heading"><h2>知识体系</h2><div className="button-row">
@@ -254,8 +277,14 @@ export default function Wiki({ id, sourceId, systemKey }: { id?: string; sourceI
           <BookOpen size={22} /><span><strong>{row.title}</strong><small>{counts.get(row.id) || 0} 篇知识页</small></span><ArrowUpRight size={16} />
         </button>)}
       </div>}
-    </section> : loading && !pages ? <Loading /> : cards?.length ? <div className="wiki-grid">{cards.map(page => <button key={page.id} className="panel wiki-card" role={batch ? 'checkbox' : undefined} aria-checked={batch ? chosen.has(page.id) : undefined} aria-label={batch ? `选择「${page.title}」` : undefined}
-      disabled={batch && !isAdmin && page.status !== 'draft'} onClick={() => batch ? toggle(page) : navigate(`/wiki/${page.id}`)}><div className="section-heading"><span className="wiki-kind">{batch ? <span aria-hidden="true" className={`wiki-choice ${chosen.has(page.id) ? 'checked' : ''}`}>{chosen.has(page.id) && '✓'}</span> : <BookOpen size={16} />}{KINDS[page.kind]}</span><Badge tone={page.status === 'published' ? 'mint' : 'orange'}>{page.status === 'published' ? '已发布' : '草稿'}</Badge></div><h2><MathText text={page.title} /></h2><p><MathText text={page.summary || '补充摘要，让主题更容易被找到。'} /></p><div className="wiki-tags">{page.tags.map(tag => <Badge key={tag} tone="gray">{tag}</Badge>)}</div><footer><span>{systemKey === 'all' ? systems?.find(row => row.id === page.system_id)?.title || '待归类' : page.category}</span><span>v{page._version} · {formatDate(page.updated_at)}<ArrowUpRight size={14} /></span></footer></button>)}</div> : showBooks ? null : <section className="panel"><Empty icon={<BookOpen size={28} />} title={scoped?.length ? '没有匹配的知识页' : '此目录还没有知识页'} text="围绕一个主题，将多份资料的证据串联起来。支持概念、方法实践和主题综述。" action={canEdit && <Button onClick={() => setNewOpen(true)}>整理第一篇知识页</Button>} /></section> : <section className="panel wiki-audit"><div className="section-heading"><h2>知识库质量检查</h2><small>{audit ? new Date(audit.checked_at).toLocaleString('zh-CN') : ''}</small></div><p className="muted">检查未整理资料、无来源页面、引用编号、孤立页面、同名页面、解析失败和未解决讨论。结果依据规则计算，需要你判断如何整理。</p>{auditError && <ErrorBox message={auditError} retry={refresh} />}{audit?.issues.map((issue, i) => <button className="wiki-issue" key={i} onClick={() => navigate(issue.path)}><span className={`wiki-issue-dot ${issue.severity}`} /><span><strong>{issue.title}</strong><small>{issue.detail}</small></span><ArrowUpRight size={16} /></button>)}{audit && !audit.issues.length && <Empty title="当前没有待处理提示" text="继续积累资料，并定期核对已发布知识页。" />}</section>}
+    </section> : booksError ? <ErrorBox message={booksError} retry={refresh} /> : loadingBooks ? <BookDirectoryPlaceholder /> : directoryView ? (
+      book ? <BookDirectory key={book.source_id} book={book} system={systemKey!} manage={canEdit ? () => setBookSource(book.source_id) : undefined} /> :
+        <section aria-label="选择书籍" className="wiki-system-grid">{books?.map(row =>
+          <button key={row.source_id} className="panel wiki-system-card" onClick={() => openBookView(row.source_id)}>
+            <BookOpen size={22} /><span><strong>{row.title}</strong><small>{row.entries.filter(entry => entry.level === 1).length} 章</small></span><ArrowUpRight size={16} />
+          </button>)}</section>
+    ) : loading && !pages ? <Loading /> : filtered?.length ? <div className="wiki-grid">{filtered.map(page => <button key={page.id} className="panel wiki-card" role={batch ? 'checkbox' : undefined} aria-checked={batch ? chosen.has(page.id) : undefined} aria-label={batch ? `选择「${page.title}」` : undefined}
+      disabled={batch && !isAdmin && page.status !== 'draft'} onClick={() => batch ? toggle(page) : navigate(book ? bookPageLink(book,page.id,systemKey!).slice(1) : '/wiki/' + page.id)}><div className="section-heading"><span className="wiki-kind">{batch ? <span aria-hidden="true" className={`wiki-choice ${chosen.has(page.id) ? 'checked' : ''}`}>{chosen.has(page.id) && '✓'}</span> : <BookOpen size={16} />}{KINDS[page.kind]}</span><Badge tone={page.status === 'published' ? 'mint' : 'orange'}>{page.status === 'published' ? '已发布' : '草稿'}</Badge></div><h2><MathText text={page.title} /></h2><p><MathText text={page.summary || '补充摘要，让主题更容易被找到。'} /></p><div className="wiki-tags">{page.tags.map(tag => <Badge key={tag} tone="gray">{tag}</Badge>)}</div><footer><span>{systemKey === 'all' ? systems?.find(row => row.id === page.system_id)?.title || '待归类' : page.category}</span><span>v{page._version} · {formatDate(page.updated_at)}<ArrowUpRight size={14} /></span></footer></button>)}</div> : <section className="panel"><Empty icon={<BookOpen size={28} />} title={scoped?.length ? '没有匹配的知识页' : '此目录还没有知识页'} text="围绕一个主题，将多份资料的证据串联起来。支持概念、方法实践和主题综述。" action={canEdit && <Button onClick={() => setNewOpen(true)}>整理第一篇知识页</Button>} /></section> : <section className="panel wiki-audit"><div className="section-heading"><h2>知识库质量检查</h2><small>{audit ? new Date(audit.checked_at).toLocaleString('zh-CN') : ''}</small></div><p className="muted">检查未整理资料、无来源页面、引用编号、孤立页面、同名页面、解析失败和未解决讨论。结果依据规则计算，需要你判断如何整理。</p>{auditError && <ErrorBox message={auditError} retry={refresh} />}{audit?.issues.map((issue, i) => <button className="wiki-issue" key={i} onClick={() => navigate(issue.path)}><span className={`wiki-issue-dot ${issue.severity}`} /><span><strong>{issue.title}</strong><small>{issue.detail}</small></span><ArrowUpRight size={16} /></button>)}{audit && !audit.issues.length && <Empty title="当前没有待处理提示" text="继续积累资料，并定期核对已发布知识页。" />}</section>}
     {systemForm && <Modal title={systemForm === 'new' ? '新建体系' : '重命名体系'} onClose={() => { if (!systemBusy) setSystemForm(null); }}>
       <form onSubmit={saveSystem}><Field label="体系名称"><input autoFocus required maxLength={200} value={name} onChange={e => setName(e.target.value)} /></Field>
         {systemMessage && <ErrorBox message={systemMessage} />}

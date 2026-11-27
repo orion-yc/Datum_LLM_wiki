@@ -1,0 +1,10 @@
+.book-reading-path, .book-reading-path span { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+.book-reading-path { margin:8px 0 18px; color:var(--muted); font-size:.86rem; }
+.book-reading-path a, .book-page-turns a { color:var(--purple-dark); overflow-wrap:anywhere; }
+.book-reading-path button { margin-inline-start:auto; }
+.book-reader-pane { position:fixed; right:12px; top:80px; bottom:15px; width:min(23vw,24rem); max-width:90vw; overflow:auto; overscroll-behavior:contain; z-index:15; background:#fff; border:1px solid var(--border); border-radius:12px; box-shadow:0 10px 35px #30234122; padding:12px; }
+.book-reader-pane .book-directory { padding:8px; margin:0; }
+.book-page-turns { margin-block-start:24px; border-top:1px solid var(--border); padding-block-start:16px; display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start; }
+.book-page-turns > div { margin-inline-start:auto; text-align:end; }
+.book-page-turns .book-skip { display:block; font-size:.85em; margin-block-start:5px; }
+@media (max-width:600px) { .book-page-turns { display:grid; } .book-page-turns > div { margin:0; text-align:start; } .book-reader-pane { width:90vw; } }

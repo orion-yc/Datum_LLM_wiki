@@ -56,9 +56,21 @@ try {
   await dialog.getByRole('button',{name:'关闭',exact:true}).click();
   await page.goto(app.base+'/#/wiki?system='+plan.system_id);
   const outline=page.getByRole('region',{name:'数据表示章节目录'});
-  await outline.getByText('1 个小节').click();
-  await outline.getByRole('link',{name:'整数',exact:true}).click();
+  await outline.waitFor();
+  assert.equal(await page.locator('.wiki-card').count(),0);
+  await page.getByRole('button',{name:'知识卡片',exact:true}).click();
+  await page.locator('.wiki-card').first().waitFor();
+  await page.getByRole('button',{name:'章节目录',exact:true}).click();
+  await outline.getByRole('link',{name:'第一章 数据表示',exact:true}).click();
+  const turns=page.getByRole('navigation',{name:'章节翻页'});
+  await turns.getByRole('link',{name:/开始本章.*整数/}).click();
   await page.getByRole('heading',{name:'整数',exact:true}).waitFor();
+  await page.getByRole('button',{name:'章节目录',exact:true}).click();
+  await page.getByRole('dialog',{name:'章节目录'}).getByRole('link',{name:'整数',exact:true}).waitFor();
+  await page.keyboard.press('Escape');
+  await turns.getByRole('link',{name:/下一章.*第二章 运算/}).click();
+  await turns.getByRole('link',{name:'返回全书目录'}).click();
+  await outline.getByRole('link',{name:/继续阅读.*第二章 运算/}).waitFor();
   console.log('✓ 手机书籍目录核对、单章试生成、续做全书和按章阅读');
 
   const englishPdf=await PDFDocument.create();
